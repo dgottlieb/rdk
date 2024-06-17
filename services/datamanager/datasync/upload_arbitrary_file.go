@@ -24,7 +24,7 @@ func SetFileLastModifiedMillis(lastModifiedMillis int) {
 	fileLastModifiedMillis = lastModifiedMillis
 }
 
-var clock = clk.New()
+var mockClock = clk.New()
 
 func uploadArbitraryFile(ctx context.Context, client v1.DataSyncServiceClient, f *os.File, partID string, tags []string) error {
 	stream, err := client.FileUpload(ctx)
@@ -44,7 +44,7 @@ func uploadArbitraryFile(ctx context.Context, client v1.DataSyncServiceClient, f
 	if err != nil {
 		return err
 	}
-	timeSinceMod := clock.Since(info.ModTime())
+	timeSinceMod := mockClock.Since(info.ModTime())
 	if timeSinceMod < time.Duration(fileLastModifiedMillis)*time.Millisecond {
 		return errors.New("file modified too recently")
 	}
