@@ -75,8 +75,8 @@ type syncer struct {
 type ManagerConstructor func(identity string, client v1.DataSyncServiceClient, logger logging.Logger,
 	captureDir string, maxSyncThreadsConfig int, filesToSync chan string) (Syncer, error)
 
-// NewManager returns a new syncer.
-func NewManager(identity string, client v1.DataSyncServiceClient, logger logging.Logger,
+// NewSyncer returns a new syncer.
+func NewSyncer(identity string, client v1.DataSyncServiceClient, logger logging.Logger,
 	captureDir string, maxSyncThreads int, filesToSync chan string,
 ) (Syncer, error) {
 	cancelCtx, cancelFunc := context.WithCancel(context.Background())

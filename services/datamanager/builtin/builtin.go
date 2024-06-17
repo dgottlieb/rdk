@@ -144,7 +144,7 @@ func NewBuiltIn(
 		additionalSyncPaths:    []string{},
 		tags:                   []string{},
 		fileLastModifiedMillis: defaultFileLastModifiedMillis,
-		syncerConstructor:      datasync.NewManager,
+		syncerConstructor:      datasync.NewSyncer,
 		selectiveSyncEnabled:   false,
 		captureManager:         data.NewCaptureManager(logger.Sublogger("capture"), clock),
 	}

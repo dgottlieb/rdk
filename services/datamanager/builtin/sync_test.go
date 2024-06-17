@@ -929,7 +929,7 @@ func getTestSyncerConstructorMock(client mockDataSyncServiceClient) datasync.Man
 	return func(identity string, _ v1.DataSyncServiceClient, logger logging.Logger,
 		viamCaptureDotDir string, maxSyncThreads int, filesToSync chan string,
 	) (datasync.Syncer, error) {
-		return datasync.NewManager(identity, client, logger, viamCaptureDotDir, maxSyncThreads, make(chan string))
+		return datasync.NewSyncer(identity, client, logger, viamCaptureDotDir, maxSyncThreads, make(chan string))
 	}
 }
 

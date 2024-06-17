@@ -149,7 +149,7 @@ func TestFileDeletion(t *testing.T) {
 			if tc.syncEnabled {
 				filesToSync := make(chan string)
 				defer close(filesToSync)
-				s, err := datasync.NewManager("rick astley", mockClient, logger, tempCaptureDir, datasync.MaxParallelSyncRoutines, filesToSync)
+				s, err := datasync.NewSyncer("rick astley", mockClient, logger, tempCaptureDir, datasync.MaxParallelSyncRoutines, filesToSync)
 				test.That(t, err, test.ShouldBeNil)
 				syncer = s
 				defer syncer.Close()
