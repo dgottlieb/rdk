@@ -116,6 +116,7 @@ type builtIn struct {
 	syncRoutineCancelFn context.CancelFunc
 	syncer              datasync.Manager
 	syncerConstructor   datasync.ManagerConstructor
+	filesToSync         chan string
 	maxSyncThreads      int
 	cloudConnSvc        cloud.ConnectionService
 	cloudConn           rpc.ClientConn
@@ -126,8 +127,7 @@ type builtIn struct {
 
 	fileDeletionRoutineCancelFn   context.CancelFunc
 	fileDeletionBackgroundWorkers *sync.WaitGroup
-
-	captureManager *data.CaptureManager
+	captureManager                *data.CaptureManager
 }
 
 // NewBuiltIn returns a new data manager service for the given robot.
@@ -167,12 +167,13 @@ func (svc *builtIn) Close(_ context.Context) error {
 		svc.fileDeletionRoutineCancelFn()
 	}
 
+	fileDeletionBackgroundWorkers := svc.fileDeletionBackgroundWorkers
 	svc.lock.Unlock()
 	svc.captureManager.Close()
 	svc.backgroundWorkers.Wait()
 
-	if svc.fileDeletionBackgroundWorkers != nil {
-		svc.fileDeletionBackgroundWorkers.Wait()
+	if fileDeletionBackgroundWorkers != nil {
+		fileDeletionBackgroundWorkers.Wait()
 	}
 
 	return nil
@@ -182,6 +183,7 @@ func (svc *builtIn) closeSyncer() {
 	if svc.syncer != nil {
 		// If previously we were syncing, close the old syncer and cancel the old updateCollectors goroutine.
 		svc.syncer.Close()
+		close(svc.filesToSync)
 		svc.syncer = nil
 	}
 	if svc.cloudConn != nil {
@@ -204,7 +206,8 @@ func (svc *builtIn) initSyncer(ctx context.Context) error {
 	}
 
 	client := v1.NewDataSyncServiceClient(conn)
-	syncer, err := svc.syncerConstructor(identity, client, svc.logger, svc.captureManager.CaptureDir(), svc.maxSyncThreads)
+	svc.filesToSync = make(chan string, svc.maxSyncThreads)
+	syncer, err := svc.syncerConstructor(identity, client, svc.logger, svc.captureManager.CaptureDir(), svc.maxSyncThreads, svc.filesToSync)
 	if err != nil {
 		return errors.Wrap(err, "failed to initialize new syncer")
 	}
@@ -230,7 +233,7 @@ func (svc *builtIn) Sync(ctx context.Context, _ map[string]interface{}) error {
 	}
 
 	svc.lock.Unlock()
-	svc.sync()
+	svc.sync(ctx)
 	return nil
 }
 
@@ -371,8 +374,14 @@ func (svc *builtIn) startSyncScheduler(intervalMins float64) {
 func (svc *builtIn) cancelSyncScheduler() {
 	if svc.syncRoutineCancelFn != nil {
 		svc.syncRoutineCancelFn()
-		svc.backgroundWorkers.Wait()
 		svc.syncRoutineCancelFn = nil
+		// DATA-2664: A goroutine calling this method must currently be holding the data manager
+		// lock. The `uploadData` background goroutine can also acquire the data manager lock prior
+		// to learning to exit. Thus we release the lock such that the `uploadData` goroutine can
+		// make progress and exit.
+		svc.lock.Unlock()
+		svc.backgroundWorkers.Wait()
+		svc.lock.Lock()
 	}
 }
 
@@ -411,7 +420,7 @@ func (svc *builtIn) uploadData(cancelCtx context.Context, intervalMins float64) 
 					svc.lock.Unlock()
 
 					if !isOffline() && shouldSync {
-						svc.sync()
+						svc.sync(cancelCtx)
 					}
 				} else {
 					svc.lock.Unlock()
@@ -428,60 +437,58 @@ func isOffline() bool {
 	return err != nil
 }
 
-func (svc *builtIn) sync() {
+func (svc *builtIn) sync(ctx context.Context) {
 	svc.captureManager.FlushCollectors()
 
 	svc.lock.Lock()
-	if svc.syncer != nil {
-		var toSync []string
-		for _, ap := range svc.additionalSyncPaths {
-			toSync = append(toSync, getAllFilesToSync(ap, svc.fileLastModifiedMillis)...)
-		}
-		syncer := svc.syncer
+	syncer := svc.syncer
+	if syncer == nil {
 		svc.lock.Unlock()
-
-		stopAfter := time.Now().Add(time.Duration(svc.syncIntervalMins * float64(time.Minute)))
-		for _, p := range toSync {
-			syncer.SyncFile(p, stopAfter)
-		}
-	} else {
-		svc.lock.Unlock()
+		return
 	}
+	svc.lock.Unlock()
+
+	getAllFilesToSync(ctx, svc.additionalSyncPaths, svc.fileLastModifiedMillis, syncer)
 }
 
 //nolint:errcheck,nilerr
-func getAllFilesToSync(dir string, lastModifiedMillis int) []string {
-	var filePaths []string
-	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
+func getAllFilesToSync(ctx context.Context, dirs []string, lastModifiedMillis int, syncer datasync.Manager) {
+	for _, dir := range dirs {
+		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if ctx.Err() != nil {
+				return filepath.SkipAll
+			}
+			if err != nil {
+				return nil
+			}
+
+			// Do not sync the files in the corrupted data directory.
+			if info.IsDir() && info.Name() == datasync.FailedDir {
+				return filepath.SkipDir
+			}
+
+			if info.IsDir() {
+				return nil
+			}
+			// If a file was modified within the past lastModifiedMillis, do not sync it (data
+			// may still be being written).
+			timeSinceMod := clock.Since(info.ModTime())
+			// When using a mock clock in tests, this can be negative since the file system will still use the system clock.
+			// Take max(timeSinceMod, 0) to account for this.
+			if timeSinceMod < 0 {
+				timeSinceMod = 0
+			}
+			isStuckInProgressCaptureFile := filepath.Ext(path) == datacapture.InProgressFileExt &&
+				timeSinceMod >= defaultFileLastModifiedMillis*time.Millisecond
+			isNonCaptureFileThatIsNotBeingWrittenTo := filepath.Ext(path) != datacapture.InProgressFileExt &&
+				timeSinceMod >= time.Duration(lastModifiedMillis)*time.Millisecond
+			isCompletedCaptureFile := filepath.Ext(path) == datacapture.FileExt
+			if isCompletedCaptureFile || isStuckInProgressCaptureFile || isNonCaptureFileThatIsNotBeingWrittenTo {
+				syncer.SendFileToSync(path)
+			}
 			return nil
-		}
-		// Do not sync the files in the corrupted data directory.
-		if info.IsDir() && info.Name() == datasync.FailedDir {
-			return filepath.SkipDir
-		}
-		if info.IsDir() {
-			return nil
-		}
-		// If a file was modified within the past lastModifiedMillis, do not sync it (data
-		// may still be being written).
-		timeSinceMod := clock.Since(info.ModTime())
-		// When using a mock clock in tests, this can be negative since the file system will still use the system clock.
-		// Take max(timeSinceMod, 0) to account for this.
-		if timeSinceMod < 0 {
-			timeSinceMod = 0
-		}
-		isStuckInProgressCaptureFile := filepath.Ext(path) == datacapture.InProgressFileExt &&
-			timeSinceMod >= defaultFileLastModifiedMillis*time.Millisecond
-		isNonCaptureFileThatIsNotBeingWrittenTo := filepath.Ext(path) != datacapture.InProgressFileExt &&
-			timeSinceMod >= time.Duration(lastModifiedMillis)*time.Millisecond
-		isCompletedCaptureFile := filepath.Ext(path) == datacapture.FileExt
-		if isCompletedCaptureFile || isStuckInProgressCaptureFile || isNonCaptureFileThatIsNotBeingWrittenTo {
-			filePaths = append(filePaths, path)
-		}
-		return nil
-	})
-	return filePaths
+		})
+	}
 }
 
 func pollFilesystem(ctx context.Context, wg *sync.WaitGroup, captureDir string,

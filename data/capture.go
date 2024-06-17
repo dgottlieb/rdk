@@ -56,6 +56,7 @@ type CaptureManager struct {
 	collectors                 map[resourceMethodMetadata]*collectorAndConfig
 	maxCaptureFileSize         int64
 	componentMethodFrequencyHz map[resourceMethodMetadata]float32
+	capturePolling             *CaptureDirPoller
 
 	logger logging.Logger
 	clk    clock.Clock
@@ -100,6 +101,11 @@ func (cm *CaptureManager) Reconfigure(ctx context.Context, deps resource.Depende
 		cm.CloseCollectors()
 		cm.collectors = make(map[resourceMethodMetadata]*collectorAndConfig)
 	}
+
+	if cm.capturePolling == nil {
+		cm.capturePolling = NewCaptureDirPoller(cm.logger)
+	}
+	cm.capturePolling.Reconfigure(ctx, cm.captureDir)
 
 	// Initialize or add collectors based on changes to the component configurations.
 	newCollectors := make(map[resourceMethodMetadata]*collectorAndConfig)
@@ -174,6 +180,7 @@ func (cm *CaptureManager) Reconfigure(ctx context.Context, deps resource.Depende
 func (cm *CaptureManager) Close() {
 	cm.FlushCollectors()
 	cm.CloseCollectors()
+	cm.capturePolling.Close()
 }
 
 func (cm *CaptureManager) CaptureDir() string {
