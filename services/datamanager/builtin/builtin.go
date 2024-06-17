@@ -114,7 +114,7 @@ type builtIn struct {
 	syncDisabled        bool
 	syncIntervalMins    float64
 	syncRoutineCancelFn context.CancelFunc
-	syncer              datasync.Manager
+	syncer              datasync.Syncer
 	syncerConstructor   datasync.ManagerConstructor
 	filesToSync         chan string
 	maxSyncThreads      int
@@ -452,7 +452,7 @@ func (svc *builtIn) sync(ctx context.Context) {
 }
 
 //nolint:errcheck,nilerr
-func getAllFilesToSync(ctx context.Context, dirs []string, lastModifiedMillis int, syncer datasync.Manager) {
+func getAllFilesToSync(ctx context.Context, dirs []string, lastModifiedMillis int, syncer datasync.Syncer) {
 	for _, dir := range dirs {
 		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 			if ctx.Err() != nil {
@@ -492,7 +492,7 @@ func getAllFilesToSync(ctx context.Context, dirs []string, lastModifiedMillis in
 }
 
 func pollFilesystem(ctx context.Context, wg *sync.WaitGroup, captureDir string,
-	deleteEveryNth int, syncer datasync.Manager, logger logging.Logger,
+	deleteEveryNth int, syncer datasync.Syncer, logger logging.Logger,
 ) {
 	if runtime.GOOS == "android" {
 		logger.Debug("file deletion if disk is full is not currently supported on Android")

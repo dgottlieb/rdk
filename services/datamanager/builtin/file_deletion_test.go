@@ -145,7 +145,7 @@ func TestFileDeletion(t *testing.T) {
 				fail:                &atomic.Bool{},
 			}
 
-			var syncer datasync.Manager
+			var syncer datasync.Syncer
 			if tc.syncEnabled {
 				filesToSync := make(chan string)
 				defer close(filesToSync)

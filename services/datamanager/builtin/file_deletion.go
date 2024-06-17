@@ -87,7 +87,7 @@ func exceedsDeletionThreshold(ctx context.Context, captureDirPath string, fsSize
 	return false, nil
 }
 
-func deleteFiles(ctx context.Context, syncer datasync.Manager, deleteEveryNth int,
+func deleteFiles(ctx context.Context, syncer datasync.Syncer, deleteEveryNth int,
 	captureDirPath string, logger logging.Logger,
 ) (int, error) {
 	index := 0

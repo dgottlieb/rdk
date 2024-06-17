@@ -39,8 +39,8 @@ const FailedDir = "failed"
 // MaxParallelSyncRoutines is the maximum number of sync goroutines that can be running at once.
 const MaxParallelSyncRoutines = 1000
 
-// Manager is responsible for enqueuing files in captureDir and uploading them to the cloud.
-type Manager interface {
+// Syncer is responsible for enqueuing files in captureDir and uploading them to the cloud.
+type Syncer interface {
 	SendFileToSync(path string)
 	SyncFile(path string)
 	SetArbitraryFileTags(tags []string)
@@ -73,12 +73,12 @@ type syncer struct {
 
 // ManagerConstructor is a function for building a Manager.
 type ManagerConstructor func(identity string, client v1.DataSyncServiceClient, logger logging.Logger,
-	captureDir string, maxSyncThreadsConfig int, filesToSync chan string) (Manager, error)
+	captureDir string, maxSyncThreadsConfig int, filesToSync chan string) (Syncer, error)
 
 // NewManager returns a new syncer.
 func NewManager(identity string, client v1.DataSyncServiceClient, logger logging.Logger,
 	captureDir string, maxSyncThreads int, filesToSync chan string,
-) (Manager, error) {
+) (Syncer, error) {
 	cancelCtx, cancelFunc := context.WithCancel(context.Background())
 	logger.Infof("Making new syncer with %d max threads", maxSyncThreads)
 	ret := syncer{
