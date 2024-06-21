@@ -42,41 +42,35 @@ type SyncManager struct {
 	selectiveSyncEnabled   bool
 	syncerConstructor      SyncerConstructor
 	filesToSync            chan string
-	maxSyncThreads         int
 	syncDisabled           bool
 	syncIntervalMins       float64
 	syncRoutineCancelFn    context.CancelFunc
 	tags                   []string
 	fileLastModifiedMillis int
 	backgroundWorkers      sync.WaitGroup
+	maxSyncThreads         int
 
 	// Dan: This now includes the capture dir. We should change the name to syncPaths.
 	additionalSyncPaths []string
-	syncTicker          *clock.Ticker
 
 	// Dan: Rename to triggerSyncSensor
 	syncSensor   selectiveSyncer
 	cloudConnSvc cloud.ConnectionService
 	cloudConn    rpc.ClientConn
+
+	// New
+	closeCtx           context.Context
+	closeFn            context.CancelFunc
+	syncIntervalMinsCh chan float64
+
+	// Dead
+	syncTicker *clock.Ticker
 }
 
 func (sm *SyncManager) Syncer() Syncer {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	return sm.syncer
-}
-
-func NewSyncManager(logger logging.Logger, clk clock.Clock) *SyncManager {
-	return &SyncManager{
-		logger:                 logger,
-		clk:                    clk,
-		fileLastModifiedMillis: defaultFileLastModifiedMillis,
-		selectiveSyncEnabled:   false,
-		syncerConstructor:      NewSyncer,
-		syncIntervalMins:       0,
-		additionalSyncPaths:    []string{},
-		tags:                   []string{},
-	}
 }
 
 type Config struct {
@@ -91,12 +85,29 @@ type Config struct {
 	Tags                   []string
 }
 
+func NewSyncManager(logger logging.Logger, clk clock.Clock) *SyncManager {
+	closeCtx, closeFn := context.WithCancel(context.Background())
+	ret := &SyncManager{
+		closeCtx:               closeCtx,
+		closeFn:                closeFn,
+		logger:                 logger,
+		clk:                    clk,
+		fileLastModifiedMillis: defaultFileLastModifiedMillis,
+		selectiveSyncEnabled:   false,
+		syncerConstructor:      NewSyncer,
+		syncIntervalMins:       0,
+		additionalSyncPaths:    []string{},
+		tags:                   []string{},
+	}
+	go ret.SyncIntervalWorker()
+
+	return ret
+}
+
 func (sm *SyncManager) Reconfigure(ctx context.Context, deps resource.Dependencies, resConfig resource.Config, syncConfig Config) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	var err error
-
-	// fmt.Println("SyncManager.Reconfigure")
 
 	// Syncer should be reinitialized if the max sync threads are updated in the config
 	newMaxSyncThreadValue := MaxParallelSyncRoutines
@@ -133,10 +144,6 @@ func (sm *SyncManager) Reconfigure(ctx context.Context, deps resource.Dependenci
 		!reflect.DeepEqual(sm.tags, syncConfig.Tags) || sm.fileLastModifiedMillis != fileLastModifiedMillis ||
 		sm.maxSyncThreads != newMaxSyncThreadValue
 
-	// fmt.Println("  SyncConfigUpdated:", syncConfigUpdated, "WasDisabled:", sm.syncDisabled, "IsDisabled:", syncConfig.ScheduledSyncDisabled)
-	// fmt.Println(sm.syncDisabled, syncConfig.ScheduledSyncDisabled, sm.syncIntervalMins, syncConfig.SyncIntervalMins,
-	//  	!reflect.DeepEqual(sm.tags, syncConfig.Tags), sm.fileLastModifiedMillis, fileLastModifiedMillis,
-	//  	sm.maxSyncThreads, newMaxSyncThreadValue)
 	if syncConfigUpdated {
 		sm.syncDisabled = syncConfig.ScheduledSyncDisabled
 		sm.syncIntervalMins = syncConfig.SyncIntervalMins
@@ -194,6 +201,7 @@ func readyToSync(ctx context.Context, s selectiveSyncer, logger logging.Logger) 
 }
 
 func (sm *SyncManager) Close(giveupCtx context.Context) {
+	sm.closeFn()
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.closeSyncer()
@@ -262,49 +270,48 @@ func (sm *SyncManager) Sync(ctx context.Context, _ map[string]interface{}) error
 	return nil
 }
 
-func (sm *SyncManager) uploadData(cancelCtx context.Context, intervalMins float64) {
-	// time.Duration loses precision at low floating point values, so turn intervalMins to milliseconds.
-	intervalMillis := 60000.0 * intervalMins
-	// The ticker must be created before uploadData returns to prevent race conditions between clock.Ticker and
-	// clock.Add in sync_test.go.
-	sm.syncTicker = sm.clk.Ticker(time.Millisecond * time.Duration(intervalMillis))
-	sm.backgroundWorkers.Add(1)
-	goutils.PanicCapturingGo(func() {
-		defer sm.backgroundWorkers.Done()
-		defer sm.syncTicker.Stop()
-
-		for {
-			if err := cancelCtx.Err(); err != nil {
-				if !errors.Is(err, context.Canceled) {
-					sm.logger.Errorw("data manager context closed unexpectedly", "error", err)
-				}
-				return
-			}
-
-			select {
-			case <-cancelCtx.Done():
-				return
-			case <-sm.syncTicker.C:
-				sm.mu.Lock()
-				if sm.syncer != nil {
-					// If selective sync is disabled, sync. If it is enabled, check the condition below.
-					shouldSync := !sm.selectiveSyncEnabled
-					// If selective sync is enabled and the sensor has been properly initialized,
-					// try to get the reading from the selective sensor that indicates whether to sync
-					if sm.syncSensor != nil && sm.selectiveSyncEnabled {
-						shouldSync = readyToSync(cancelCtx, sm.syncSensor, sm.logger)
-					}
-					sm.mu.Unlock()
-
-					if !isOffline() && shouldSync {
-						sm.Sync(cancelCtx, nil)
-					}
-				} else {
-					sm.mu.Unlock()
-				}
-			}
+func (sm *SyncManager) SyncIntervalWorker() {
+	var ticker *clock.Ticker
+	defer func() {
+		if ticker != nil {
+			ticker.Stop()
 		}
-	})
+	}()
+
+	var tickerCh <-chan time.Time
+	for {
+		select {
+		case <-sm.closeCtx.Done():
+			break
+		case newVal := <-sm.syncIntervalMinsCh:
+			intervalMillis := 60000.0 * newVal
+			ticker = sm.clk.Ticker(time.Duration(intervalMillis) * time.Millisecond)
+			tickerCh = ticker.C
+		case tm := <-tickerCh:
+			sm.logger.Debugw("Datasync interval hit", "tickerTime", tm)
+			sm.uploadData()
+		}
+	}
+}
+
+func (sm *SyncManager) uploadData() {
+	sm.mu.Lock()
+	if sm.syncer != nil {
+		// If selective sync is disabled, sync. If it is enabled, check the condition below.
+		shouldSync := !sm.selectiveSyncEnabled
+		// If selective sync is enabled and the sensor has been properly initialized,
+		// try to get the reading from the selective sensor that indicates whether to sync
+		if sm.syncSensor != nil && sm.selectiveSyncEnabled {
+			shouldSync = readyToSync(sm.closeCtx, sm.syncSensor, sm.logger)
+		}
+		sm.mu.Unlock()
+
+		if !isOffline() && shouldSync {
+			sm.Sync(sm.closeCtx, nil)
+		}
+	} else {
+		sm.mu.Unlock()
+	}
 }
 
 //nolint:errcheck,nilerr
