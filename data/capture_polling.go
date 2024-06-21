@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"go.viam.com/rdk/logging"
+	"go.viam.com/rdk/services/datamanager"
 	"go.viam.com/rdk/services/datamanager/datacapture"
-	"go.viam.com/rdk/services/datamanager/datasync"
 	"go.viam.com/rdk/utils"
 )
 
@@ -81,7 +81,7 @@ func countCaptureDirFiles(ctx context.Context, captureDir string) int {
 		}
 
 		// Do not count the files in the corrupted data directory.
-		if info.IsDir() && info.Name() == datasync.FailedDir {
+		if info.IsDir() && info.Name() == datamanager.FailedDir {
 			return filepath.SkipDir
 		}
 

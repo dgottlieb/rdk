@@ -22,3 +22,7 @@ func (m *noopManager) MarkInProgress(path string) bool {
 func (m *noopManager) SendFileToSync(path string) {}
 
 func (m *noopManager) UnmarkInProgress(path string) {}
+
+func (m *noopManager) SetSyncerConstructor(fn SyncerConstructor) {}
+
+func (m *noopManager) SetFileLastModifiedMillis(s int) {}

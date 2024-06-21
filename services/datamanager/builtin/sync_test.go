@@ -690,7 +690,7 @@ func TestSyncConfigUpdateBehavior(t *testing.T) {
 			test.That(t, err, test.ShouldBeNil)
 
 			builtInSvc := dmsvc.(*builtIn)
-			initTicker := builtInSvc.syncTicker
+			initTicker := builtInSvc.syncManager.SyncTicker()
 
 			// Reconfigure the dmsvc with new sync configs
 			cfg.ScheduledSyncDisabled = tc.newSyncDisabled
@@ -704,8 +704,8 @@ func TestSyncConfigUpdateBehavior(t *testing.T) {
 			test.That(t, err, test.ShouldBeNil)
 
 			newBuildInSvc := dmsvc.(*builtIn)
-			newTicker := newBuildInSvc.syncTicker
-			newSyncer := newBuildInSvc.syncer
+			newTicker := newBuildInSvc.syncManager.SyncTicker()
+			newSyncer := newBuildInSvc.syncManager.Syncer()
 			newFileDeletionBackgroundWorker := newBuildInSvc.fileDeletionBackgroundWorkers
 
 			if tc.newSyncDisabled {
@@ -717,7 +717,7 @@ func TestSyncConfigUpdateBehavior(t *testing.T) {
 				test.That(t, initTicker, test.ShouldNotEqual, newTicker)
 			}
 			if tc.newMaxSyncThreads != 0 {
-				test.That(t, newBuildInSvc.maxSyncThreads, test.ShouldEqual, tc.newMaxSyncThreads)
+				test.That(t, newBuildInSvc.syncManager.MaxSyncThreads(), test.ShouldEqual, tc.newMaxSyncThreads)
 			}
 		})
 	}
@@ -925,7 +925,7 @@ func (m *mockStreamingDCClient) CloseSend() error {
 	return nil
 }
 
-func getTestSyncerConstructorMock(client mockDataSyncServiceClient) datasync.ManagerConstructor {
+func getTestSyncerConstructorMock(client mockDataSyncServiceClient) datasync.SyncerConstructor {
 	return func(identity string, _ v1.DataSyncServiceClient, logger logging.Logger,
 		viamCaptureDotDir string, maxSyncThreads int, filesToSync chan string,
 	) (datasync.Syncer, error) {

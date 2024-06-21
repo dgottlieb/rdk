@@ -20,6 +20,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"go.viam.com/rdk/logging"
+	"go.viam.com/rdk/services/datamanager"
 	"go.viam.com/rdk/services/datamanager/datacapture"
 )
 
@@ -32,9 +33,6 @@ var (
 	OfflineWaitTimeSeconds = atomic.NewInt32(60)
 	maxRetryInterval       = 24 * time.Hour
 )
-
-// FailedDir is a subdirectory of the capture directory that holds any files that could not be synced.
-const FailedDir = "failed"
 
 // MaxParallelSyncRoutines is the maximum number of sync goroutines that can be running at once.
 const MaxParallelSyncRoutines = 1000
@@ -71,8 +69,8 @@ type syncer struct {
 	captureDir string
 }
 
-// ManagerConstructor is a function for building a Manager.
-type ManagerConstructor func(identity string, client v1.DataSyncServiceClient, logger logging.Logger,
+// SyncerConstructor is a function for building a Manager.
+type SyncerConstructor func(identity string, client v1.DataSyncServiceClient, logger logging.Logger,
 	captureDir string, maxSyncThreadsConfig int, filesToSync chan string) (Syncer, error)
 
 // NewSyncer returns a new syncer.
@@ -336,7 +334,7 @@ func moveFailedData(path, parentDir string) error {
 		return errors.Wrapf(err, fmt.Sprintf("error getting relative path of corrupted data: %s", path))
 	}
 	// Create a new directory parentDir/corrupted/pathToFile
-	newDir := filepath.Join(parentDir, FailedDir, filepath.Dir(relativePath))
+	newDir := filepath.Join(parentDir, datamanager.FailedDir, filepath.Dir(relativePath))
 	if err := os.MkdirAll(newDir, 0o700); err != nil {
 		return errors.Wrapf(err, fmt.Sprintf("error making new directory for corrupted data: %s", path))
 	}

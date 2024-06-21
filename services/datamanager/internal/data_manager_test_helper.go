@@ -20,6 +20,6 @@ type DMService interface {
 		conf resource.Config,
 	) error
 	Close(ctx context.Context) error
-	SetSyncerConstructor(fn datasync.ManagerConstructor)
+	SetSyncerConstructor(fn datasync.SyncerConstructor)
 	SetFileLastModifiedMillis(s int)
 }
