@@ -595,10 +595,15 @@ func (manager *resourceManager) completeConfig(
 
 					var verb string
 					conf := gNode.Config()
+					level := conf.LogConfiguration.Level
+					if resName.String() == "rdk:service:data_manager/data_manager-1" {
+						level = logging.DEBUG
+					}
+
 					if gNode.IsUninitialized() {
 						verb = "configuring"
 						gNode.InitializeLogger(
-							manager.logger, resName.String(), conf.LogConfiguration.Level,
+							manager.logger, resName.String(), level,
 						)
 					} else {
 						verb = "reconfiguring"

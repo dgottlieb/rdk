@@ -217,7 +217,6 @@ func readFromCloud(
 	checkForNewCert bool,
 	logger logging.Logger,
 ) (*Config, error) {
-	logger.Debug("reading configuration from the cloud")
 	cloudCfg := originalCfg.Cloud
 	unprocessedConfig, cached, err := getFromCloudOrCache(ctx, cloudCfg, shouldReadFromCache, logger)
 	if err != nil {

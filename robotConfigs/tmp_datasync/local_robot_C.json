@@ -1,0 +1,128 @@
+ {
+  "components": [
+    {
+      "attributes": {
+        "encoder": "left-foot-encoder",
+        "ticks_per_rotation": 1000
+      },
+      "depends_on": [
+        "left-foot-encoder"
+      ],
+      "model": "fake",
+      "name": "left-foot",
+      "namespace": "rdk",
+      "service_configs": [
+        {
+          "attributes": {
+            "capture_methods": [
+              {
+                "additional_params": {},
+                "capture_frequency_hz": 1,
+                "method": "Position"
+              },
+              {
+                "additional_params": {},
+                "capture_frequency_hz": 1,
+                "method": "IsPowered"
+              }
+            ]
+          },
+          "type": "data_manager"
+        }
+      ],
+      "type": "motor"
+    },
+    {
+      "attributes": {
+        "encoder": "right-foot-encoder",
+        "ticks_per_rotation": 1000
+      },
+      "depends_on": [
+        "right-foot-encoder"
+      ],
+      "model": "fake",
+      "name": "right-foot",
+      "namespace": "rdk",
+      "service_configs": [
+        {
+          "attributes": {
+            "capture_methods": [
+              {
+                "additional_params": {},
+                "capture_frequency_hz": 2,
+                "method": "IsPowered"
+              },
+              {
+                "additional_params": {},
+                "capture_frequency_hz": 1,
+                "method": "Position"
+              }
+            ]
+          },
+          "type": "data_manager"
+        }
+      ],
+      "type": "motor"
+    },
+    {
+      "attributes": {},
+      "model": "fake",
+      "name": "left-foot-encoder",
+      "namespace": "rdk",
+      "service_configs": [
+        {
+          "attributes": {
+            "capture_methods": [
+              {
+                "additional_params": {},
+                "capture_frequency_hz": 3,
+                "method": "TicksCount"
+              }
+            ]
+          },
+          "type": "data_manager"
+        }
+      ],
+      "type": "encoder"
+    },
+    {
+      "attributes": {},
+      "model": "fake",
+      "name": "right-foot-encoder",
+      "namespace": "rdk",
+      "service_configs": [
+        {
+          "attributes": {
+            "capture_methods": [
+              {
+                "additional_params": {},
+                "capture_frequency_hz": 1,
+                "method": "TicksCount"
+              }
+            ]
+          },
+          "type": "data_manager"
+        }
+      ],
+      "type": "encoder"
+    }
+  ],
+  "services": [
+    {
+      "attributes": {
+        "additional_sync_paths": ["/home/dgottlieb/viam/rdk/capturedir"],
+        "capture_dir": "/home/dgottlieb/viam/rdk/capturedir2",
+        "sync_disabled": false,
+        "sync_interval_mins": 0.2,
+        "tags": [],
+        "maximum_num_sync_threads": 50
+      },
+      "log_configuration": {
+        "level": "debug"
+      },
+      "name": "data_manager-1",
+      "namespace": "rdk",
+      "type": "data_manager"
+    }
+  ]
+}

@@ -64,7 +64,7 @@ func newCloudWatcher(ctx context.Context, config *Config, logger logging.Logger)
 				interval /= 5
 				firstRead = false
 			}
-			if !utils.SelectContextOrWait(cancelCtx, interval) {
+			if !utils.SelectContextOrWait(cancelCtx, time.Second) {
 				return
 			}
 			var checkForNewCert bool

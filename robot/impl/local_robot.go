@@ -490,7 +490,7 @@ func newWithResources(
 	)
 
 	r.activeBackgroundWorkers.Add(1)
-	r.configTicker = time.NewTicker(5 * time.Second)
+	r.configTicker = time.NewTicker(time.Second)
 	// This goroutine tries to complete the config and update weak dependencies
 	// if any resources are not configured. It executes every 5 seconds or when
 	// manually triggered. Manual triggers are sent when changes in remotes are
@@ -505,9 +505,9 @@ func newWithResources(
 			case <-closeCtx.Done():
 				return
 			case <-r.configTicker.C:
-				r.logger.CDebugw(ctx, "configuration attempt triggered by ticker")
+				logger.CDebugw(ctx, "configuration attempt triggered by ticker")
 			case <-r.triggerConfig:
-				r.logger.CDebugw(ctx, "configuration attempt triggered by remote")
+				logger.CDebugw(ctx, "configuration attempt triggered by remote")
 			}
 			anyChanges := r.manager.updateRemotesResourceNames(closeCtx)
 			if r.manager.anyResourcesNotConfigured() {
@@ -516,9 +516,9 @@ func newWithResources(
 			}
 			if anyChanges {
 				r.updateWeakDependents(ctx)
-				r.logger.CDebugw(ctx, "configuration attempt completed with changes")
+				logger.CDebugw(ctx, "configuration attempt completed with changes")
 			} else {
-				r.logger.CDebugw(ctx, "configuration attempt completed without changes")
+				logger.CDebugw(ctx, "configuration attempt completed without changes")
 			}
 		}
 	}, r.activeBackgroundWorkers.Done)

@@ -286,6 +286,41 @@ func RobotsLogsAction(c *cli.Context) error {
 	return nil
 }
 
+func RobotPartUpdateConfig(c *cli.Context) error {
+	client, err := newViamClient(c)
+	if err != nil {
+		return err
+	}
+
+	orgStr := c.String(organizationFlag)
+	locStr := c.String(locationFlag)
+	robotStr := c.String(machineFlag)
+	part, err := client.robotPart(orgStr, locStr, robotStr, c.String(partFlag))
+	if err != nil {
+		return errors.Wrap(err, "could not get machine part")
+	}
+	_ = part
+
+	confFilePath := c.String("configFile")
+	confFile, err := os.ReadFile(confFilePath)
+	if err != nil {
+		return errors.Wrap(err, fmt.Sprintf("could not read file: %v", confFilePath))
+	}
+
+	confMap := make(map[string]any)
+	err = json.Unmarshal(confFile, &confMap)
+	if err != nil {
+		return errors.Wrap(err, "could not parse config as json")
+	}
+
+	err = client.updateRobotPart(part, confMap)
+	if err != nil {
+		return errors.Wrap(err, "error updating part")
+	}
+
+	return nil
+}
+
 // RobotsPartStatusAction is the corresponding Action for 'machines part status'.
 func RobotsPartStatusAction(c *cli.Context) error {
 	client, err := newViamClient(c)

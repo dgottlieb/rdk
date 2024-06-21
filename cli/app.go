@@ -1137,6 +1137,30 @@ var app = &cli.App{
 					HideHelpCommand: true,
 					Subcommands: []*cli.Command{
 						{
+							Name:      "set-config",
+							Usage:     "set machine config",
+							UsageText: createUsageText("not sure", []string{machineFlag}, true),
+							Flags: []cli.Flag{
+								&AliasStringFlag{
+									cli.StringFlag{
+										Name:     machineFlag,
+										Aliases:  []string{aliasRobotFlag},
+										Required: true,
+									},
+								},
+								&cli.StringFlag{
+									Name:     partFlag,
+									Required: true,
+								},
+								&cli.StringFlag{
+									Name:        "configFile",
+									DefaultText: "path to config file",
+									// Required:    true,
+								},
+							},
+							Action: RobotPartUpdateConfig,
+						},
+						{
 							Name:      "status",
 							Usage:     "display part status",
 							UsageText: createUsageText("machines part status", []string{machineFlag, partFlag}, true),
