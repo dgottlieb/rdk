@@ -49,20 +49,20 @@ type Syncer interface {
 
 // syncer is responsible for uploading files in captureDir to the cloud.
 type syncer struct {
-	partID            string
-	client            v1.DataSyncServiceClient
-	logger            logging.Logger
-	backgroundWorkers sync.WaitGroup
-	cancelCtx         context.Context
-	cancelFunc        func()
-	arbitraryFileTags []string
+	partID string
+	client v1.DataSyncServiceClient
+	logger logging.Logger
+	// backgroundWorkers sync.WaitGroup
+	// cancelCtx         context.Context
+	// cancelFunc        func()
+	// arbitraryFileTags []string
 
 	progressLock sync.Mutex
 	inProgress   map[string]bool
 
-	syncErrs   chan error
-	closed     atomic.Bool
-	logRoutine sync.WaitGroup
+	// syncErrs   chan error
+	closed atomic.Bool
+	// logRoutine sync.WaitGroup
 
 	filesToSync chan string
 
@@ -165,10 +165,10 @@ func (s *syncer) SyncFile(path string) {
 		captureFile, err := datacapture.ReadFile(f)
 		if err != nil {
 			if err = f.Close(); err != nil {
-				s.syncErrs <- errors.Wrap(err, "error closing data capture file")
+				s.logger.Errorw("error closing data capture file", "err", err)
 			}
 			if err := moveFailedData(f.Name(), s.captureDir); err != nil {
-				s.syncErrs <- errors.Wrap(err, fmt.Sprintf("error moving corrupted data %s", f.Name()))
+				s.logger.Errorw("error moving corrupted data", "file", f.Name(), "err", err)
 			}
 			return
 		}
@@ -184,7 +184,7 @@ func (s *syncer) syncDataCaptureFile(f *datacapture.File) {
 		func(ctx context.Context) error {
 			err := uploadDataCaptureFile(ctx, s.client, f, s.partID)
 			if err != nil {
-				s.syncErrs <- errors.Wrap(err, fmt.Sprintf("error uploading file %s", f.GetPath()))
+				s.logger.Errorw("error uploading file", "file", f.GetPath(), "err", err)
 			}
 			return err
 		},
@@ -192,18 +192,18 @@ func (s *syncer) syncDataCaptureFile(f *datacapture.File) {
 	if uploadErr != nil {
 		err := f.Close()
 		if err != nil {
-			s.syncErrs <- errors.Wrap(err, "error closing data capture file")
+			s.logger.Errorw("error closing data capture file", "file", f.GetPath(), "err", err)
 		}
 
 		if !isRetryableGRPCError(uploadErr) {
 			if err := moveFailedData(f.GetPath(), s.captureDir); err != nil {
-				s.syncErrs <- errors.Wrap(err, fmt.Sprintf("error moving corrupted data %s", f.GetPath()))
+				s.logger.Errorw("error moving corrupted data", "file", f.GetPath(), "err", err)
 			}
 		}
 		return
 	}
 	if err := f.Delete(); err != nil {
-		s.syncErrs <- errors.Wrap(err, "error deleting data capture file")
+		s.logger.Errorw("error deleting data capture file")
 		return
 	}
 }
@@ -214,12 +214,12 @@ func (s *syncer) syncArbitraryFile(f *os.File) {
 		func(ctx context.Context) error {
 			uploadErr := uploadArbitraryFile(ctx, s.client, f, s.partID, s.arbitraryFileTags)
 			if uploadErr != nil {
-				s.syncErrs <- errors.Wrap(uploadErr, fmt.Sprintf("error uploading file %s", f.Name()))
+				s.logger.Errorw("error uploading file", "file", f.Name(), "err", uploadErr)
 			}
 
 			if !isRetryableGRPCError(uploadErr) {
 				if err := moveFailedData(f.Name(), path.Dir(f.Name())); err != nil {
-					s.syncErrs <- errors.Wrap(err, fmt.Sprintf("error moving corrupted data %s", f.Name()))
+					s.logger.Errorw("error moving corrupted data", "file", f.Name(), "err", err)
 				}
 			}
 			return uploadErr
@@ -227,12 +227,12 @@ func (s *syncer) syncArbitraryFile(f *os.File) {
 	if uploadErr != nil {
 		err := f.Close()
 		if err != nil {
-			s.syncErrs <- errors.Wrap(err, "error closing data capture file")
+			s.logger.Errorw("error closing data capture file", "err", err)
 		}
 		return
 	}
 	if err := os.Remove(f.Name()); err != nil {
-		s.syncErrs <- errors.Wrap(err, fmt.Sprintf("error deleting file %s", f.Name()))
+		s.logger.Errorw("error deleting file", "file", f.Name(), "err", err)
 		return
 	}
 }
