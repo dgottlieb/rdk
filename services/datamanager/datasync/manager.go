@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sync"
 	"time"
 
@@ -22,7 +21,6 @@ import (
 	"go.viam.com/rdk/services/datamanager/datacapture"
 	"go.viam.com/rdk/utils"
 	goutils "go.viam.com/utils"
-	"go.viam.com/utils/rpc"
 )
 
 var grpcConnectionTimeout = 10 * time.Second
@@ -36,29 +34,23 @@ type selectiveSyncer interface {
 }
 
 type SyncManager struct {
-	mu                     sync.Mutex
-	syncer                 Syncer
-	captureDir             string
-	logger                 logging.Logger
-	clk                    clock.Clock
-	selectiveSyncEnabled   bool
-	syncerConstructor      SyncerConstructor
-	filesToSync            chan string
-	syncDisabled           bool
-	syncIntervalMins       float64
-	syncRoutineCancelFn    context.CancelFunc
-	tags                   []string
-	fileLastModifiedMillis int
-	backgroundWorkers      sync.WaitGroup
-	maxSyncThreads         int
+	mu                  sync.Mutex
+	syncer              Syncer
+	captureDir          string
+	logger              logging.Logger
+	clk                 clock.Clock
+	syncerConstructor   SyncerConstructor
+	filesToSync         chan string
+	syncDisabled        bool
+	syncIntervalMins    float64
+	syncRoutineCancelFn context.CancelFunc
+	backgroundWorkers   sync.WaitGroup
 
 	// Dan: This now includes the capture dir. We should change the name to syncPaths.
 	additionalSyncPaths []string
 
 	// Dan: Rename to triggerSyncSensor
-	syncSensor   selectiveSyncer
-	cloudConnSvc cloud.ConnectionService
-	cloudConn    rpc.ClientConn
+	syncSensor selectiveSyncer
 
 	// New
 	closeCtx context.Context
@@ -89,16 +81,14 @@ type Config struct {
 func NewSyncManager(logger logging.Logger, clk clock.Clock) *SyncManager {
 	closeCtx, closeFn := context.WithCancel(context.Background())
 	ret := &SyncManager{
-		closeCtx:               closeCtx,
-		closeFn:                closeFn,
-		logger:                 logger,
-		clk:                    clk,
-		fileLastModifiedMillis: defaultFileLastModifiedMillis,
-		selectiveSyncEnabled:   false,
-		syncerConstructor:      NewSyncer,
-		syncIntervalMins:       0,
-		additionalSyncPaths:    []string{},
-		tags:                   []string{},
+		closeCtx:            closeCtx,
+		closeFn:             closeFn,
+		logger:              logger,
+		clk:                 clk,
+		syncerConstructor:   NewSyncer,
+		syncIntervalMins:    0,
+		additionalSyncPaths: []string{},
+		filesToSync:         make(chan string, 1000),
 	}
 	go ret.SyncIntervalWorker()
 
@@ -113,57 +103,26 @@ func (sm *SyncManager) Reconfigure(ctx context.Context, deps resource.Dependenci
 	sm.syncDisabled = syncConfig.ScheduledSyncDisabled
 	sm.syncIntervalMins = syncConfig.SyncIntervalMins
 
-	// Syncer should be reinitialized if the max sync threads are updated in the config
-	newMaxSyncThreadValue := MaxParallelSyncRoutines
-	if syncConfig.MaximumNumSyncThreads != 0 {
-		newMaxSyncThreadValue = syncConfig.MaximumNumSyncThreads
+	if sm.syncer == nil {
+		sm.syncer, err = sm.syncerConstructor(sm.closeCtx, sm.filesToSync, sm.logger)
 	}
-	reinitSyncer := sm.cloudConnSvc != syncConfig.CloudConnSvc || sm.maxSyncThreads != syncConfig.MaximumNumSyncThreads
-	sm.cloudConnSvc = syncConfig.CloudConnSvc
+
+	if sm.syncer != nil {
+		sm.syncer.Reconfigure(syncConfig.CloudConnSvc, syncConfig.Tags, syncConfig.MaximumNumSyncThreads, syncConfig.CaptureDir)
+	}
 
 	syncPaths := append(syncConfig.AdditionalSyncPaths, syncConfig.CaptureDir)
 	sm.additionalSyncPaths = syncPaths
 
-	fileLastModifiedMillis := syncConfig.FileLastModifiedMillis
-	if fileLastModifiedMillis <= 0 {
-		fileLastModifiedMillis = defaultFileLastModifiedMillis
-	}
-
 	var syncSensor selectiveSyncer
 	if syncConfig.SelectiveSyncerName != "" {
-		sm.selectiveSyncEnabled = true
-		syncSensor, err = sensor.FromDependencies(deps, syncConfig.SelectiveSyncerName)
+		sm.syncSensor, err = sensor.FromDependencies(deps, syncConfig.SelectiveSyncerName)
 		if err != nil {
 			sm.logger.CErrorw(
 				ctx, "unable to initialize selective syncer; will not sync at all until fixed or removed from config", "error", err.Error())
 		}
 	} else {
-		sm.selectiveSyncEnabled = false
-	}
-	if sm.syncSensor != syncSensor {
-		sm.syncSensor = syncSensor
-	}
-
-	syncConfigUpdated :=
-		!reflect.DeepEqual(sm.tags, syncConfig.Tags) || sm.fileLastModifiedMillis != fileLastModifiedMillis ||
-			sm.maxSyncThreads != newMaxSyncThreadValue
-
-	if syncConfigUpdated {
-		sm.tags = syncConfig.Tags
-		sm.fileLastModifiedMillis = fileLastModifiedMillis
-		sm.maxSyncThreads = newMaxSyncThreadValue
-
-		if sm.syncer == nil {
-			if err := sm.initSyncer(ctx); err != nil {
-				return err
-			}
-		} else if reinitSyncer {
-			sm.closeSyncer()
-			if err := sm.initSyncer(ctx); err != nil {
-				return err
-			}
-		}
-		sm.syncer.SetArbitraryFileTags(sm.tags)
+		sm.syncSensor = nil
 	}
 
 	return nil
@@ -213,6 +172,7 @@ func (sm *SyncManager) closeSyncer() {
 	}
 }
 
+// initSyncer constructs Callers must serialize access to `initSyncer`.
 func (sm *SyncManager) initSyncer(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, grpcConnectionTimeout)
 	defer cancel()
@@ -232,7 +192,6 @@ func (sm *SyncManager) initSyncer(ctx context.Context) error {
 		return errors.Wrap(err, "failed to initialize new syncer")
 	}
 	sm.syncer = syncer
-	sm.cloudConn = conn
 	return nil
 }
 
@@ -244,13 +203,6 @@ func (sm *SyncManager) initSyncer(ctx context.Context) error {
 // regardless of whether or not is the scheduled time.
 func (sm *SyncManager) Sync(ctx context.Context, _ map[string]interface{}) error {
 	sm.mu.Lock()
-	if sm.syncer == nil {
-		err := sm.initSyncer(ctx)
-		if err != nil {
-			sm.mu.Unlock()
-			return err
-		}
-	}
 	fileLastModifiedMillis := sm.fileLastModifiedMillis
 	syncPaths := sm.additionalSyncPaths
 	syncer := sm.syncer
@@ -309,22 +261,18 @@ func (sm *SyncManager) SyncIntervalWorker() {
 
 func (sm *SyncManager) uploadData() {
 	sm.mu.Lock()
-	if sm.syncer != nil {
-		// If selective sync is disabled, sync. If it is enabled, check the condition below.
-		shouldSync := !sm.selectiveSyncEnabled
-		// If selective sync is enabled and the sensor has been properly initialized,
-		// try to get the reading from the selective sensor that indicates whether to sync
-		if sm.syncSensor != nil && sm.selectiveSyncEnabled {
-			shouldSync = readyToSync(sm.closeCtx, sm.syncSensor, sm.logger)
-		}
-		sm.mu.Unlock()
+	syncSensor := sm.syncSensor
+	sm.mu.Unlock()
 
-		if !isOffline() && shouldSync {
-			sm.Sync(sm.closeCtx, nil)
-		}
-	} else {
-		sm.mu.Unlock()
+	if !readyToSync(sm.closeCtx, sm.syncSensor, sm.logger) || isOffline(sm.closeCtx) {
+		return
 	}
+
+	if isOffline(sm.closeCtx) {
+		return
+	}
+
+	sm.Sync(sm.closeCtx, nil)
 }
 
 //nolint:errcheck,nilerr
@@ -383,9 +331,11 @@ func (sm *SyncManager) cancelSyncScheduler() {
 	}
 }
 
-func isOffline() bool {
-	timeout := 5 * time.Second
-	_, err := net.DialTimeout("tcp", "app.viam.com:443", timeout)
+func isOffline(ctx context.Context) bool {
+	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var dialer net.Dialer
+	_, err := dialer.DialContext(timeoutCtx, "tcp", "app.viam.com:443")
 	// If there's an error, the system is likely offline.
 	return err != nil
 }
@@ -394,14 +344,16 @@ func (sm *SyncManager) SetSyncerConstructor(fn SyncerConstructor) {
 	sm.syncerConstructor = fn
 }
 
-func (sm *SyncManager) SetFileLastModifiedMillis(s int) {
-	sm.fileLastModifiedMillis = s
-}
+// Replace with Reconfigure + synconfig?
+// func (sm *SyncManager) SetFileLastModifiedMillis(s int) {
+//  	sm.fileLastModifiedMillis = s
+// }
 
 func (sm *SyncManager) SyncTicker() *clock.Ticker {
 	return sm.syncTicker
 }
 
-func (sm *SyncManager) MaxSyncThreads() int {
-	return sm.maxSyncThreads
-}
+// Replace with Reconfigure + synconfig?
+// func (sm *SyncManager) MaxSyncThreads() int {
+//  	return sm.maxSyncThreads
+// }

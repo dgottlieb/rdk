@@ -647,11 +647,11 @@ func (r *localRobot) newResource(
 	gNode *resource.GraphNode,
 	conf resource.Config,
 ) (res resource.Resource, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = errors.Wrap(errors.Errorf("%v", r), "panic creating resource")
-		}
-	}()
+	// defer func() {
+	//  	if r := recover(); r != nil {
+	//  		err = errors.Wrap(errors.Errorf("%v", r), "panic creating resource")
+	//  	}
+	// }()
 	resName := conf.ResourceName()
 	resInfo, ok := resource.LookupRegistration(resName.API, conf.Model)
 	if !ok {

@@ -1,3 +1,4 @@
+set -e
 source ~/.viamdevrc
 
 DIR=$PWD

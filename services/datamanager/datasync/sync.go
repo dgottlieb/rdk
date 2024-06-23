@@ -7,14 +7,12 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/pkg/errors"
 	"go.uber.org/atomic"
 	v1 "go.viam.com/api/app/datasync/v1"
-	goutils "go.viam.com/utils"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -40,7 +38,6 @@ const MaxParallelSyncRoutines = 1000
 // Syncer is responsible for enqueuing files in captureDir and uploading them to the cloud.
 type Syncer interface {
 	SendFileToSync(path string)
-	SyncFile(path string)
 	SetArbitraryFileTags(tags []string)
 	Close()
 	MarkInProgress(path string) bool
@@ -49,20 +46,15 @@ type Syncer interface {
 
 // syncer is responsible for uploading files in captureDir to the cloud.
 type syncer struct {
-	partID string
-	client v1.DataSyncServiceClient
-	logger logging.Logger
-	// backgroundWorkers sync.WaitGroup
-	// cancelCtx         context.Context
-	// cancelFunc        func()
-	// arbitraryFileTags []string
+	partID            string
+	client            v1.DataSyncServiceClient
+	logger            logging.Logger
+	backgroundWorkers sync.WaitGroup
+	fileTags          []string
 
+	isAlive      context.Context
 	progressLock sync.Mutex
 	inProgress   map[string]bool
-
-	// syncErrs   chan error
-	closed atomic.Bool
-	// logRoutine sync.WaitGroup
 
 	filesToSync chan string
 
@@ -70,52 +62,14 @@ type syncer struct {
 }
 
 // SyncerConstructor is a function for building a Manager.
-type SyncerConstructor func(identity string, client v1.DataSyncServiceClient, logger logging.Logger,
-	captureDir string, maxSyncThreadsConfig int, filesToSync chan string) (Syncer, error)
+type SyncerConstructor func(isAlive context.Context, filesToSync chan string, logger logging.Logger) (Syncer, error)
 
 // NewSyncer returns a new syncer.
-func NewSyncer(identity string, client v1.DataSyncServiceClient, logger logging.Logger,
-	captureDir string, maxSyncThreads int, filesToSync chan string,
-) (Syncer, error) {
-	cancelCtx, cancelFunc := context.WithCancel(context.Background())
-	logger.Infof("Making new syncer with %d max threads", maxSyncThreads)
+func NewSyncer(isAlive context.Context, filesToSync chan string, logger logging.Logger) (Syncer, error) {
 	ret := syncer{
-		partID:            identity,
-		client:            client,
-		logger:            logger,
-		cancelCtx:         cancelCtx,
-		cancelFunc:        cancelFunc,
-		arbitraryFileTags: []string{},
-		inProgress:        make(map[string]bool),
-		syncErrs:          make(chan error, 10),
-		filesToSync:       filesToSync,
-		captureDir:        captureDir,
-	}
-	ret.logRoutine.Add(1)
-	goutils.PanicCapturingGo(func() {
-		defer ret.logRoutine.Done()
-		ret.logSyncErrs()
-	})
-
-	for i := 0; i < maxSyncThreads; i++ {
-		ret.backgroundWorkers.Add(1)
-		go func() {
-			defer ret.backgroundWorkers.Done()
-			for {
-				if cancelCtx.Err() != nil {
-					return
-				}
-				select {
-				case <-cancelCtx.Done():
-					return
-				case path, ok := <-ret.filesToSync:
-					if !ok {
-						return
-					}
-					ret.SyncFile(path)
-				}
-			}
-		}()
+		logger:      logger,
+		inProgress:  make(map[string]bool),
+		filesToSync: filesToSync,
 	}
 
 	return &ret, nil
@@ -123,22 +77,18 @@ func NewSyncer(identity string, client v1.DataSyncServiceClient, logger logging.
 
 // Close closes all resources (goroutines) associated with s.
 func (s *syncer) Close() {
-	s.closed.Store(true)
-	s.cancelFunc()
 	s.backgroundWorkers.Wait()
-	close(s.syncErrs)
-	s.logRoutine.Wait()
 }
 
 func (s *syncer) SetArbitraryFileTags(tags []string) {
-	s.arbitraryFileTags = tags
+	s.fileTags = tags
 }
 
 func (s *syncer) SendFileToSync(path string) {
 	select {
 	case s.filesToSync <- path:
 		return
-	case <-s.cancelCtx.Done():
+	case <-s.isAlive.Done():
 		return
 	}
 }
@@ -180,10 +130,10 @@ func (s *syncer) SyncFile(path string) {
 
 func (s *syncer) syncDataCaptureFile(f *datacapture.File) {
 	uploadErr := exponentialRetry(
-		s.cancelCtx,
+		s.isAlive,
 		func(ctx context.Context) error {
 			err := uploadDataCaptureFile(ctx, s.client, f, s.partID)
-			if err != nil {
+			if err != nil && !errors.Is(err, context.Canceled) {
 				s.logger.Errorw("error uploading file", "file", f.GetPath(), "err", err)
 			}
 			return err
@@ -210,10 +160,10 @@ func (s *syncer) syncDataCaptureFile(f *datacapture.File) {
 
 func (s *syncer) syncArbitraryFile(f *os.File) {
 	uploadErr := exponentialRetry(
-		s.cancelCtx,
+		s.isAlive,
 		func(ctx context.Context) error {
-			uploadErr := uploadArbitraryFile(ctx, s.client, f, s.partID, s.arbitraryFileTags)
-			if uploadErr != nil {
+			uploadErr := uploadArbitraryFile(ctx, s.client, f, s.partID, s.fileTags)
+			if uploadErr != nil && !errors.Is(uploadErr, context.Canceled) {
 				s.logger.Errorw("error uploading file", "file", f.Name(), "err", uploadErr)
 			}
 
@@ -231,7 +181,7 @@ func (s *syncer) syncArbitraryFile(f *os.File) {
 		}
 		return
 	}
-	if err := os.Remove(f.Name()); err != nil {
+	if err := os.Remove(f.Name()); err != nil && !errors.Is(err, context.Canceled) {
 		s.logger.Errorw("error deleting file", "file", f.Name(), "err", err)
 		return
 	}
@@ -255,19 +205,6 @@ func (s *syncer) UnmarkInProgress(path string) {
 	s.progressLock.Lock()
 	defer s.progressLock.Unlock()
 	delete(s.inProgress, path)
-}
-
-func (s *syncer) logSyncErrs() {
-	for err := range s.syncErrs {
-		if s.closed.Load() {
-			// Don't log context cancellation errors if the Manager has already been closed. This means the Manager
-			// cancelled the context, and the context cancellation error is expected.
-			if strings.Contains(err.Error(), context.Canceled.Error()) {
-				continue
-			}
-		}
-		s.logger.Error(err)
-	}
 }
 
 // exponentialRetry calls fn and retries with exponentially increasing waits from initialWait to a
