@@ -110,7 +110,7 @@
   "services": [
     {
       "attributes": {
-          "additional_sync_paths": ["/home/dgottlieb/viam/rdk/capturedir1", "/home/dgottlieb/viam/rdk/capturedir2"],
+          "additional_sync_paths": ["/home/dgottlieb/viam/rdk/capturedir", "/home/dgottlieb/viam/rdk/capturedir2"],
         "capture_dir": "/home/dgottlieb/viam/rdk/capturedir3",
         "sync_disabled": false,
         "sync_interval_mins": 0.1,

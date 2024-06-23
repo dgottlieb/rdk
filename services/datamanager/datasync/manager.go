@@ -2,6 +2,8 @@ package datasync
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -59,9 +61,8 @@ type SyncManager struct {
 	cloudConn    rpc.ClientConn
 
 	// New
-	closeCtx           context.Context
-	closeFn            context.CancelFunc
-	syncIntervalMinsCh chan float64
+	closeCtx context.Context
+	closeFn  context.CancelFunc
 
 	// Dead
 	syncTicker *clock.Ticker
@@ -109,6 +110,9 @@ func (sm *SyncManager) Reconfigure(ctx context.Context, deps resource.Dependenci
 	defer sm.mu.Unlock()
 	var err error
 
+	sm.syncDisabled = syncConfig.ScheduledSyncDisabled
+	sm.syncIntervalMins = syncConfig.SyncIntervalMins
+
 	// Syncer should be reinitialized if the max sync threads are updated in the config
 	newMaxSyncThreadValue := MaxParallelSyncRoutines
 	if syncConfig.MaximumNumSyncThreads != 0 {
@@ -140,38 +144,26 @@ func (sm *SyncManager) Reconfigure(ctx context.Context, deps resource.Dependenci
 		sm.syncSensor = syncSensor
 	}
 
-	syncConfigUpdated := sm.syncDisabled != syncConfig.ScheduledSyncDisabled || sm.syncIntervalMins != syncConfig.SyncIntervalMins ||
+	syncConfigUpdated :=
 		!reflect.DeepEqual(sm.tags, syncConfig.Tags) || sm.fileLastModifiedMillis != fileLastModifiedMillis ||
-		sm.maxSyncThreads != newMaxSyncThreadValue
+			sm.maxSyncThreads != newMaxSyncThreadValue
 
 	if syncConfigUpdated {
-		sm.syncDisabled = syncConfig.ScheduledSyncDisabled
-		sm.syncIntervalMins = syncConfig.SyncIntervalMins
 		sm.tags = syncConfig.Tags
 		sm.fileLastModifiedMillis = fileLastModifiedMillis
 		sm.maxSyncThreads = newMaxSyncThreadValue
 
-		sm.cancelSyncScheduler()
-		if !sm.syncDisabled && sm.syncIntervalMins != 0.0 {
-			if sm.syncer == nil {
-				if err := sm.initSyncer(ctx); err != nil {
-					return err
-				}
-			} else if reinitSyncer {
-				sm.closeSyncer()
-				if err := sm.initSyncer(ctx); err != nil {
-					return err
-				}
+		if sm.syncer == nil {
+			if err := sm.initSyncer(ctx); err != nil {
+				return err
 			}
-			sm.syncer.SetArbitraryFileTags(sm.tags)
-			sm.startSyncScheduler(sm.syncIntervalMins)
-		} else {
-			if sm.syncTicker != nil {
-				sm.syncTicker.Stop()
-				sm.syncTicker = nil
-			}
+		} else if reinitSyncer {
 			sm.closeSyncer()
+			if err := sm.initSyncer(ctx); err != nil {
+				return err
+			}
 		}
+		sm.syncer.SetArbitraryFileTags(sm.tags)
 	}
 
 	return nil
@@ -273,22 +265,43 @@ func (sm *SyncManager) Sync(ctx context.Context, _ map[string]interface{}) error
 func (sm *SyncManager) SyncIntervalWorker() {
 	var ticker *clock.Ticker
 	defer func() {
+		fmt.Println("Worker quit")
 		if ticker != nil {
 			ticker.Stop()
 		}
 	}()
 
+	var currSyncIntervalMins float64
 	var tickerCh <-chan time.Time
 	for {
+		sm.mu.Lock()
+		syncDisabled := sm.syncDisabled
+		configSyncIntervalMins := sm.syncIntervalMins
+		sm.mu.Unlock()
+
+		if syncDisabled || configSyncIntervalMins < 1e-9 {
+			// If sync is disabled, recheck config values roughly once cloud config refresh.
+			configSyncIntervalMins = 0.1
+		}
+
+		if math.Abs(currSyncIntervalMins-configSyncIntervalMins) > 1e-9 {
+			// If the sync interval changed, recreate the ticker with the new value. For floats we
+			// check if the values are within some epsilon rather than using equality.
+			intervalMillis := 60000.0 * configSyncIntervalMins
+			ticker = sm.clk.Ticker(time.Duration(intervalMillis) * time.Millisecond)
+			tickerCh = ticker.C
+
+			currSyncIntervalMins = configSyncIntervalMins
+		}
+
 		select {
 		case <-sm.closeCtx.Done():
 			break
-		case newVal := <-sm.syncIntervalMinsCh:
-			intervalMillis := 60000.0 * newVal
-			ticker = sm.clk.Ticker(time.Duration(intervalMillis) * time.Millisecond)
-			tickerCh = ticker.C
 		case tm := <-tickerCh:
-			sm.logger.Debugw("Datasync interval hit", "tickerTime", tm)
+			sm.logger.Debugw("Datasync interval hit", "tickerTime", tm, "syncEnabled", !syncDisabled)
+			if syncDisabled {
+				continue
+			}
 			sm.uploadData()
 		}
 	}
@@ -352,13 +365,6 @@ func getAllFilesToSync(ctx context.Context, dirs []string, lastModifiedMillis in
 			return nil
 		})
 	}
-}
-
-// startSyncScheduler starts the goroutine that calls Sync repeatedly if scheduled sync is enabled.
-func (sm *SyncManager) startSyncScheduler(intervalMins float64) {
-	cancelCtx, fn := context.WithCancel(context.Background())
-	sm.syncRoutineCancelFn = fn
-	sm.uploadData(cancelCtx, intervalMins)
 }
 
 // cancelSyncScheduler cancels the goroutine that calls Sync repeatedly if scheduled sync is enabled.
