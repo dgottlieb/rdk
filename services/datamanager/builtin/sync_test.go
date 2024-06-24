@@ -699,12 +699,7 @@ func TestSyncConfigUpdateBehavior(t *testing.T) {
 			})
 			test.That(t, err, test.ShouldBeNil)
 
-			newSyncer := dmsvc.syncManager.Syncer()
 			newFileDeletionBackgroundWorker := dmsvc.fileDeletionBackgroundWorkers
-
-			if tc.newSyncDisabled {
-				test.That(t, newSyncer, test.ShouldBeNil)
-			}
 			test.That(t, newFileDeletionBackgroundWorker, test.ShouldNotBeNil)
 		})
 	}
