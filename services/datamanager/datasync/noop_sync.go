@@ -3,6 +3,7 @@ package datasync
 import (
 	"context"
 
+	v1 "go.viam.com/api/app/datasync/v1"
 	"go.viam.com/rdk/internal/cloud"
 )
 
@@ -30,3 +31,5 @@ func (m *noopManager) MarkInProgress(path string) bool {
 func (m *noopManager) SyncFile(ctx context.Context, path string) {}
 
 func (m *noopManager) UnmarkInProgress(path string) {}
+
+func (m *noopManager) UseMockClient(client v1.DataSyncServiceClient) {}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/benbjohnson/clock"
 
+	v1 "go.viam.com/api/app/datasync/v1"
 	"go.viam.com/rdk/components/sensor"
 	"go.viam.com/rdk/internal/cloud"
 	"go.viam.com/rdk/logging"
@@ -31,6 +32,20 @@ type Config struct {
 	ScheduledSyncDisabled  bool
 	SyncIntervalMins       float64
 	Tags                   []string
+}
+
+// Syncer is responsible for uploading files to the cloud.
+type Syncer interface {
+	Reconfigure(
+		ctx context.Context,
+		cloudConn cloud.ConnectionService,
+		captureDir string,
+		tags []string,
+	)
+	SyncFile(ctx context.Context, path string)
+	MarkInProgress(path string) bool
+	UnmarkInProgress(path string)
+	UseMockClient(client v1.DataSyncServiceClient)
 }
 
 var grpcConnectionTimeout = 10 * time.Second
@@ -73,7 +88,7 @@ func NewManager(logger logging.Logger, clk clock.Clock) *SyncManager {
 	return NewManagerWithSyncer(NewSyncer(logger), logger, clk)
 }
 
-func NewManagerWithSyncer(syncer Syncer, logger logging.Logger, clk clock.Clock) *SyncManager {
+func NewManagerWithSyncer(sync Syncer, logger logging.Logger, clk clock.Clock) *SyncManager {
 	isAliveCtx, cancelSync := context.WithCancel(context.Background())
 	ret := &SyncManager{
 		isAliveCtx:  isAliveCtx,
@@ -81,7 +96,7 @@ func NewManagerWithSyncer(syncer Syncer, logger logging.Logger, clk clock.Clock)
 		logger:      logger,
 		clk:         clk,
 		filesToSync: make(chan string, 1000),
-		syncer:      syncer,
+		syncer:      NewSyncer(logger),
 	}
 
 	ret.workers = NewWorkers(func() {

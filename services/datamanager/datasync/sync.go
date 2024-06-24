@@ -36,19 +36,6 @@ var (
 // MaxParallelSyncRoutines is the maximum number of sync goroutines that can be running at once.
 const MaxParallelSyncRoutines = 1000
 
-// Syncer is responsible for enqueuing files in captureDir and uploading them to the cloud.
-type Syncer interface {
-	Reconfigure(
-		ctx context.Context,
-		cloudConn cloud.ConnectionService,
-		captureDir string,
-		tags []string,
-	)
-	SyncFile(ctx context.Context, path string)
-	MarkInProgress(path string) bool
-	UnmarkInProgress(path string)
-}
-
 type config struct {
 	client     v1.DataSyncServiceClient
 	partID     string
@@ -70,7 +57,7 @@ type syncer struct {
 }
 
 // NewSyncer returns a new syncer.
-func NewSyncer(logger logging.Logger) Syncer {
+func NewSyncer(logger logging.Logger) *syncer {
 	ret := syncer{
 		logger:     logger,
 		inProgress: make(map[string]bool),
@@ -78,6 +65,17 @@ func NewSyncer(logger logging.Logger) Syncer {
 	ret.config.Store(&config{})
 
 	return &ret
+}
+
+func NewSyncerWithConfig(partID string, client v1.DataSyncServiceClient, logger logging.Logger, captureDir string, numSyncWorkers int, filesToSync chan string) (*syncer, error) {
+	ret := NewSyncer(logger)
+	ret.config.Store(&config{
+		client:     client,
+		partID:     partID,
+		captureDir: captureDir,
+	})
+
+	return ret, nil
 }
 
 func (s *syncer) Reconfigure(
@@ -230,6 +228,13 @@ func (s *syncer) UnmarkInProgress(path string) {
 	s.progressLock.Lock()
 	defer s.progressLock.Unlock()
 	delete(s.inProgress, path)
+}
+
+func (s *syncer) UseMockClient(client v1.DataSyncServiceClient) {
+	cfg := s.config.Load()
+	cfgCopy := *cfg
+	cfgCopy.client = client
+	s.config.Store(&cfgCopy)
 }
 
 // exponentialRetry calls fn and retries with exponentially increasing waits from initialWait to a

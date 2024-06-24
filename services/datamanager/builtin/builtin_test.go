@@ -23,7 +23,7 @@ import (
 	"go.viam.com/rdk/resource"
 	"go.viam.com/rdk/robot"
 	"go.viam.com/rdk/services/datamanager"
-	"go.viam.com/rdk/services/datamanager/internal"
+	"go.viam.com/rdk/services/datamanager/datasync"
 	"go.viam.com/rdk/spatialmath"
 	"go.viam.com/rdk/testutils/inject"
 	"go.viam.com/rdk/utils"
@@ -67,7 +67,11 @@ func getInjectedRobot() *inject.Robot {
 	return r
 }
 
-func newTestDataManager(t *testing.T) (internal.DMService, robot.Robot) {
+func syncerFromClient(client *MockDataSyncServiceClient) datasync.Syncer {
+	return nil
+}
+
+func newTestDataManager(t *testing.T) (*builtIn, robot.Robot) {
 	t.Helper()
 	dmCfg := &Config{}
 	cfgService := resource.Config{
@@ -77,19 +81,49 @@ func newTestDataManager(t *testing.T) (internal.DMService, robot.Robot) {
 	logger := logging.NewTestLogger(t)
 
 	// Create local robot with injected arm and remote.
-	r := getInjectedRobot()
+	mainRobot := getInjectedRobot()
 	remoteRobot := getInjectedRobot()
-	r.RemoteByNameFunc = func(name string) (robot.Robot, bool) {
+	mainRobot.RemoteByNameFunc = func(name string) (robot.Robot, bool) {
 		return remoteRobot, true
 	}
 
-	resources := resourcesFromDeps(t, r, []string{cloud.InternalServiceName.String()})
+	resources := resourcesFromDeps(t, mainRobot, []string{cloud.InternalServiceName.String()})
 	svc, err := NewBuiltIn(context.Background(), resources, cfgService, logger)
 	if err != nil {
 		t.Log(err)
 		t.FailNow()
 	}
-	return svc.(internal.DMService), r
+	return svc, mainRobot
+}
+
+func newTestDataManagerWithMockClient(t *testing.T, mockClient MockDataSyncServiceClient) (*builtIn, robot.Robot) {
+	t.Helper()
+	dmCfg := &Config{}
+	cfgService := resource.Config{
+		API:                 datamanager.API,
+		ConvertedAttributes: dmCfg,
+	}
+	logger := logging.NewTestLogger(t)
+
+	// Create local robot with injected arm and remote.
+	mainRobot := getInjectedRobot()
+	remoteRobot := getInjectedRobot()
+	mainRobot.RemoteByNameFunc = func(name string) (robot.Robot, bool) {
+		return remoteRobot, true
+	}
+
+	resources := resourcesFromDeps(t, mainRobot, []string{cloud.InternalServiceName.String()})
+
+	syncLogger := logger.Sublogger("sync")
+	syncer := datasync.NewSyncer(syncLogger)
+	syncer.UseMockClient(mockClient)
+	syncManager := datasync.NewManagerWithSyncer(syncer, syncLogger, clock)
+	svc, err := NewBuiltInWithSyncManager(context.Background(), resources, cfgService, syncManager, logger)
+	if err != nil {
+		t.Log(err)
+		t.FailNow()
+	}
+	return svc, mainRobot
 }
 
 func setupConfig(t *testing.T, relativePath string) (*Config, map[resource.Name]resource.AssociatedConfig, []string) {

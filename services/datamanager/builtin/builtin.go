@@ -27,7 +27,17 @@ func init() {
 		datamanager.API,
 		resource.DefaultServiceModel,
 		resource.Registration[datamanager.Service, *Config]{
-			Constructor: NewBuiltIn,
+			// Wrap NewBuiltIn in a lambda that returns a `datamanager.Service`. `NewBuiltIn`
+			// returns the structure that implements `datamanager.Service`. Not the interface
+			// itself. Go generics aren't expressive enough to know this.
+			Constructor: func(
+				ctx context.Context,
+				deps resource.Dependencies,
+				conf resource.Config,
+				logger logging.Logger,
+			) (datamanager.Service, error) {
+				return NewBuiltIn(ctx, deps, conf, logger)
+			},
 			WeakDependencies: []resource.Matcher{
 				resource.TypeMatcher{Type: resource.APITypeComponentName},
 				resource.SubtypeMatcher{Subtype: slam.SubtypeName},
@@ -79,12 +89,22 @@ func NewBuiltIn(
 	deps resource.Dependencies,
 	conf resource.Config,
 	logger logging.Logger,
-) (datamanager.Service, error) {
+) (*builtIn, error) {
+	return NewBuiltInWithSyncManager(ctx, deps, conf, datasync.NewManager(logger.Sublogger("sync"), clock), logger)
+}
+
+func NewBuiltInWithSyncManager(
+	ctx context.Context,
+	deps resource.Dependencies,
+	conf resource.Config,
+	syncManager *datasync.SyncManager,
+	logger logging.Logger,
+) (*builtIn, error) {
 	svc := &builtIn{
 		Named:          conf.ResourceName().AsNamed(),
 		logger:         logger,
 		captureManager: data.NewCaptureManager(logger.Sublogger("capture"), clock),
-		syncManager:    datasync.NewManager(logger.Sublogger("sync"), clock),
+		syncManager:    syncManager,
 	}
 
 	if err := svc.Reconfigure(ctx, deps, conf); err != nil {
