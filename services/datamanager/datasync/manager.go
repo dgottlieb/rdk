@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/benbjohnson/clock"
+
 	"go.viam.com/rdk/components/sensor"
 	"go.viam.com/rdk/internal/cloud"
 	"go.viam.com/rdk/logging"
@@ -38,12 +39,12 @@ var grpcConnectionTimeout = 10 * time.Second
 const defaultFileLastModifiedMillis = 10000.0
 
 type SyncManager struct {
-	mu                sync.Mutex
-	syncer            Syncer
-	workers           *Workers
-	logger            logging.Logger
-	clk               clock.Clock
-	syncerConstructor SyncerConstructor
+	mu        sync.Mutex
+	syncer    Syncer
+	workers   *Workers
+	waitGroup sync.WaitGroup
+	logger    logging.Logger
+	clk       clock.Clock
 
 	syncDisabled           bool
 	syncIntervalMins       float64
@@ -68,17 +69,21 @@ func (sm *SyncManager) Syncer() Syncer {
 	return sm.syncer
 }
 
-func NewSyncManager(logger logging.Logger, clk clock.Clock) *SyncManager {
+func NewManager(logger logging.Logger, clk clock.Clock) *SyncManager {
+	return NewManagerWithSyncer(NewSyncer(logger), logger, clk)
+}
+
+func NewManagerWithSyncer(syncer Syncer, logger logging.Logger, clk clock.Clock) *SyncManager {
 	isAliveCtx, cancelSync := context.WithCancel(context.Background())
 	ret := &SyncManager{
-		isAliveCtx:        isAliveCtx,
-		cancelSync:        cancelSync,
-		logger:            logger,
-		clk:               clk,
-		syncerConstructor: NewSyncer,
-		syncIntervalMins:  0,
-		filesToSync:       make(chan string, 1000),
+		isAliveCtx:  isAliveCtx,
+		cancelSync:  cancelSync,
+		logger:      logger,
+		clk:         clk,
+		filesToSync: make(chan string, 1000),
+		syncer:      syncer,
 	}
+
 	ret.workers = NewWorkers(func() {
 		select {
 		case <-isAliveCtx.Done():
@@ -87,10 +92,15 @@ func NewSyncManager(logger logging.Logger, clk clock.Clock) *SyncManager {
 			if !ok {
 				return
 			}
-			ret.syncer.SyncFile(path)
+			ret.syncer.SyncFile(isAliveCtx, path)
 		}
-	}, logger)
-	go ret.SyncIntervalWorker()
+	}, &ret.waitGroup, logger)
+
+	ret.waitGroup.Add(1)
+	go func() {
+		defer ret.waitGroup.Done()
+		ret.SyncIntervalWorker()
+	}()
 
 	return ret
 }
@@ -106,7 +116,12 @@ func (sm *SyncManager) Reconfigure(ctx context.Context, deps resource.Dependenci
 	sm.captureDir = syncConfig.CaptureDir
 	sm.additionalSyncPaths = syncConfig.AdditionalSyncPaths
 	sm.fileLastModifiedMillis = syncConfig.FileLastModifiedMillis
-	sm.workers.SetNumWorkers(syncConfig.MaximumNumSyncThreads)
+
+	numSyncThreads := syncConfig.MaximumNumSyncThreads
+	if numSyncThreads == 0 {
+		numSyncThreads = MaxParallelSyncRoutines
+	}
+	sm.workers.SetNumWorkers(numSyncThreads)
 
 	if syncConfig.SelectiveSyncerName != "" {
 		sm.syncSensor, err = sensor.FromDependencies(deps, syncConfig.SelectiveSyncerName)
@@ -119,9 +134,9 @@ func (sm *SyncManager) Reconfigure(ctx context.Context, deps resource.Dependenci
 		sm.syncSensor = nil
 	}
 
-	if sm.syncer == nil {
-		sm.syncer, err = sm.syncerConstructor(sm.isAliveCtx, sm.filesToSync, sm.logger)
-	}
+	// if sm.syncer == nil {
+	//  	sm.syncer, err = sm.syncerConstructor(sm.isAliveCtx, sm.filesToSync, sm.logger)
+	// }
 
 	// Dan: TODO -- manage syncThreads here -- syncer will just deal with reading files/pushing to
 	// web.
@@ -168,7 +183,7 @@ func readyToSync(ctx context.Context, selectiveSyncer selectiveSyncer, logger lo
 
 func (sm *SyncManager) Close(giveupCtx context.Context) {
 	sm.cancelSync()
-	sm.workers.Wait()
+	sm.waitGroup.Wait()
 	close(sm.filesToSync)
 }
 
@@ -230,7 +245,7 @@ func (sm *SyncManager) SyncIntervalWorker() {
 
 		select {
 		case <-sm.isAliveCtx.Done():
-			break
+			return
 		case tm := <-tickerCh:
 			sm.logger.Debugw("Datasync interval hit", "tickerTime", tm, "syncEnabled", !syncDisabled)
 			if syncDisabled {
@@ -254,7 +269,7 @@ func (sm *SyncManager) uploadData() {
 }
 
 //nolint:errcheck,nilerr
-func (manager *SyncManager) getAllFilesToSync(ctx context.Context, dirs []string, lastModifiedMillis int) {
+func (sm *SyncManager) getAllFilesToSync(ctx context.Context, dirs []string, lastModifiedMillis int) {
 	for _, dir := range dirs {
 		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 			if ctx.Err() != nil {
@@ -287,8 +302,8 @@ func (manager *SyncManager) getAllFilesToSync(ctx context.Context, dirs []string
 			isCompletedCaptureFile := filepath.Ext(path) == datacapture.FileExt
 			if isCompletedCaptureFile || isStuckInProgressCaptureFile || isNonCaptureFileThatIsNotBeingWrittenTo {
 				select {
-				case manager.filesToSync <- path:
-				case <-manager.isAliveCtx.Done():
+				case sm.filesToSync <- path:
+				case <-sm.isAliveCtx.Done():
 					return filepath.SkipAll
 				}
 			}
@@ -306,9 +321,9 @@ func isOffline(ctx context.Context) bool {
 	return err != nil
 }
 
-func (sm *SyncManager) SetSyncerConstructor(fn SyncerConstructor) {
-	sm.syncerConstructor = fn
-}
+// func (sm *SyncManager) SetSyncerConstructor(fn SyncerConstructor) {
+//  	sm.syncerConstructor = fn
+// }
 
 // Replace existing callers with Reconfigure + synconfig?
 // func (sm *SyncManager) SetFileLastModifiedMillis(s int) {

@@ -77,7 +77,6 @@ type Config struct {
 	CaptureDir                  string
 	Tags                        []string
 	MaximumCaptureFileSizeBytes int64
-	clk                         clock.Clock
 }
 
 func (cm *CaptureManager) Reconfigure(ctx context.Context, deps resource.Dependencies, resConfig resource.Config, dataConfig Config) error {

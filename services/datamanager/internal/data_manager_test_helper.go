@@ -6,7 +6,6 @@ import (
 	"context"
 
 	"go.viam.com/rdk/resource"
-	"go.viam.com/rdk/services/datamanager/datasync"
 )
 
 // DMService in the internal package includes additional exported functions relating to the syncing and
@@ -20,6 +19,6 @@ type DMService interface {
 		conf resource.Config,
 	) error
 	Close(ctx context.Context) error
-	SetSyncerConstructor(fn datasync.SyncerConstructor)
+	// SetSyncerConstructor(fn datasync.SyncerConstructor)
 	SetFileLastModifiedMillis(s int)
 }

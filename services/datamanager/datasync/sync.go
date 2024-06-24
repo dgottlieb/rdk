@@ -44,7 +44,7 @@ type Syncer interface {
 		captureDir string,
 		tags []string,
 	)
-	SyncFile(path string)
+	SyncFile(ctx context.Context, path string)
 	MarkInProgress(path string) bool
 	UnmarkInProgress(path string)
 }
@@ -61,31 +61,23 @@ type config struct {
 
 // syncer is responsible for uploading files in captureDir to the cloud.
 type syncer struct {
-	logger logging.Logger
-
 	config atomic.Pointer[config]
 
-	isAliveCtx   context.Context
 	progressLock sync.Mutex
 	inProgress   map[string]bool
 
-	filesToSync chan string
+	logger logging.Logger
 }
 
-// SyncerConstructor is a function for building a Manager.
-type SyncerConstructor func(isAlive context.Context, filesToSync chan string, logger logging.Logger) (Syncer, error)
-
 // NewSyncer returns a new syncer.
-func NewSyncer(isAliveCtx context.Context, filesToSync chan string, logger logging.Logger) (Syncer, error) {
+func NewSyncer(logger logging.Logger) Syncer {
 	ret := syncer{
-		logger:      logger,
-		inProgress:  make(map[string]bool),
-		isAliveCtx:  isAliveCtx,
-		filesToSync: filesToSync,
+		logger:     logger,
+		inProgress: make(map[string]bool),
 	}
 	ret.config.Store(&config{})
 
-	return &ret, nil
+	return &ret
 }
 
 func (s *syncer) Reconfigure(
@@ -118,10 +110,7 @@ func (s *syncer) Reconfigure(
 	s.config.Store(&newConfig)
 }
 
-func (s *syncer) SendFileToSync(path string) {
-}
-
-func (s *syncer) SyncFile(path string) {
+func (s *syncer) SyncFile(ctx context.Context, path string) {
 	// If the file is already being synced, do not kick off a new goroutine.
 	// The goroutine will again check and return early if sync is already in progress.
 	if !s.MarkInProgress(path) {
@@ -129,7 +118,7 @@ func (s *syncer) SyncFile(path string) {
 	}
 	defer s.UnmarkInProgress(path)
 	//nolint:gosec
-	f, err := os.Open(path)
+	osFile, err := os.Open(path)
 	if err != nil {
 		// Don't log if the file does not exist, because that means it was successfully synced and deleted
 		// in between paths being built and this executing.
@@ -139,86 +128,86 @@ func (s *syncer) SyncFile(path string) {
 		return
 	}
 
-	if datacapture.IsDataCaptureFile(f) {
-		captureFile, err := datacapture.ReadFile(f)
+	if datacapture.IsDataCaptureFile(osFile) {
+		captureFile, err := datacapture.ReadFile(osFile)
 		if err != nil {
-			if err = f.Close(); err != nil {
+			if err = osFile.Close(); err != nil {
 				s.logger.Errorw("error closing data capture file", "err", err)
 			}
 
 			captureDir := s.config.Load().captureDir
-			if err := moveFailedData(f.Name(), captureDir); err != nil {
-				s.logger.Errorw("error moving corrupted data", "file", f.Name(), "err", err)
+			if err := moveFailedData(osFile.Name(), captureDir); err != nil {
+				s.logger.Errorw("error moving corrupted data", "file", osFile.Name(), "err", err)
 			}
 			return
 		}
-		s.syncDataCaptureFile(captureFile)
+		s.syncDataCaptureFile(ctx, captureFile)
 	} else {
-		s.syncArbitraryFile(f)
+		s.syncArbitraryFile(ctx, osFile)
 	}
 }
 
-func (s *syncer) syncDataCaptureFile(f *datacapture.File) {
+func (s *syncer) syncDataCaptureFile(ctx context.Context, file *datacapture.File) {
 	config := s.config.Load()
 	client, partID, captureDir := config.client, config.partID, config.captureDir
 
 	uploadErr := exponentialRetry(
-		s.isAliveCtx,
+		ctx,
 		func(ctx context.Context) error {
-			err := uploadDataCaptureFile(ctx, client, f, partID)
+			err := uploadDataCaptureFile(ctx, client, file, partID)
 			if err != nil && !errors.Is(err, context.Canceled) {
-				s.logger.Errorw("error uploading file", "file", f.GetPath(), "err", err)
+				s.logger.Errorw("error uploading file", "file", file.GetPath(), "err", err)
 			}
 			return err
 		},
 	)
 	if uploadErr != nil {
-		err := f.Close()
+		err := file.Close()
 		if err != nil {
-			s.logger.Errorw("error closing data capture file", "file", f.GetPath(), "err", err)
+			s.logger.Errorw("error closing data capture file", "file", file.GetPath(), "err", err)
 		}
 
 		if !isRetryableGRPCError(uploadErr) {
-			if err := moveFailedData(f.GetPath(), captureDir); err != nil {
-				s.logger.Errorw("error moving corrupted data", "file", f.GetPath(), "err", err)
+			if err := moveFailedData(file.GetPath(), captureDir); err != nil {
+				s.logger.Errorw("error moving corrupted data", "file", file.GetPath(), "err", err)
 			}
 		}
 		return
 	}
-	if err := f.Delete(); err != nil {
+	if err := file.Delete(); err != nil {
 		s.logger.Errorw("error deleting data capture file")
 		return
 	}
 }
 
-func (s *syncer) syncArbitraryFile(f *os.File) {
+func (s *syncer) syncArbitraryFile(ctx context.Context, file *os.File) {
 	config := s.config.Load()
 	client, partID, fileTags := config.client, config.partID, config.fileTags
 
 	uploadErr := exponentialRetry(
-		s.isAliveCtx,
+		ctx,
 		func(ctx context.Context) error {
-			uploadErr := uploadArbitraryFile(ctx, client, f, partID, fileTags)
+			uploadErr := uploadArbitraryFile(ctx, client, file, partID, fileTags)
 			if uploadErr != nil && !errors.Is(uploadErr, context.Canceled) {
-				s.logger.Errorw("error uploading file", "file", f.Name(), "err", uploadErr)
+				s.logger.Errorw("error uploading file", "file", file.Name(), "err", uploadErr)
 			}
 
 			if !isRetryableGRPCError(uploadErr) {
-				if err := moveFailedData(f.Name(), path.Dir(f.Name())); err != nil {
-					s.logger.Errorw("error moving corrupted data", "file", f.Name(), "err", err)
+				if err := moveFailedData(file.Name(), path.Dir(file.Name())); err != nil {
+					s.logger.Errorw("error moving corrupted data", "file", file.Name(), "err", err)
 				}
 			}
 			return uploadErr
 		})
 	if uploadErr != nil {
-		err := f.Close()
+		err := file.Close()
 		if err != nil {
 			s.logger.Errorw("error closing data capture file", "err", err)
 		}
 		return
 	}
-	if err := os.Remove(f.Name()); err != nil && !errors.Is(err, context.Canceled) {
-		s.logger.Errorw("error deleting file", "file", f.Name(), "err", err)
+	if err := os.Remove(file.Name()); err != nil && !errors.Is(err, context.Canceled) {
+		s.logger.Errorw("error deleting file", "file", file.Name(), "err", err)
 		return
 	}
 }

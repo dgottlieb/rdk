@@ -27,6 +27,6 @@ func (m *noopManager) MarkInProgress(path string) bool {
 	return true
 }
 
-func (m *noopManager) SyncFile(path string) {}
+func (m *noopManager) SyncFile(ctx context.Context, path string) {}
 
 func (m *noopManager) UnmarkInProgress(path string) {}

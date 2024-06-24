@@ -84,7 +84,7 @@ func NewBuiltIn(
 		Named:          conf.ResourceName().AsNamed(),
 		logger:         logger,
 		captureManager: data.NewCaptureManager(logger.Sublogger("capture"), clock),
-		syncManager:    datasync.NewSyncManager(logger.Sublogger("sync"), clock),
+		syncManager:    datasync.NewManager(logger.Sublogger("sync"), clock),
 	}
 
 	if err := svc.Reconfigure(ctx, deps, conf); err != nil {

@@ -286,6 +286,7 @@ func RobotsLogsAction(c *cli.Context) error {
 	return nil
 }
 
+// RobotPartUpdateConfig is the corresponding Action for 'machines part set-config'
 func RobotPartUpdateConfig(c *cli.Context) error {
 	client, err := newViamClient(c)
 	if err != nil {
