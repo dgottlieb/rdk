@@ -1,5 +1,11 @@
 package datasync
 
+import (
+	"context"
+
+	"go.viam.com/rdk/internal/cloud"
+)
+
 type noopManager struct{}
 
 var _ Syncer = (*noopManager)(nil)
@@ -9,9 +15,13 @@ func NewNoopManager() Syncer {
 	return &noopManager{}
 }
 
-func (m *noopManager) SetArbitraryFileTags(tags []string) {}
-
-func (m *noopManager) Close() {}
+func (m *noopManager) Reconfigure(
+	ctx context.Context,
+	cloudConn cloud.ConnectionService,
+	captureDir string,
+	tags []string,
+) {
+}
 
 func (m *noopManager) MarkInProgress(path string) bool {
 	return true
@@ -20,7 +30,3 @@ func (m *noopManager) MarkInProgress(path string) bool {
 func (m *noopManager) SendFileToSync(path string) {}
 
 func (m *noopManager) UnmarkInProgress(path string) {}
-
-func (m *noopManager) SetSyncerConstructor(fn SyncerConstructor) {}
-
-func (m *noopManager) SetFileLastModifiedMillis(s int) {}

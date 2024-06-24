@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
+	"go.viam.com/rdk/internal/cloud"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/services/datamanager"
 	"go.viam.com/rdk/services/datamanager/datacapture"
@@ -37,58 +38,91 @@ const MaxParallelSyncRoutines = 1000
 
 // Syncer is responsible for enqueuing files in captureDir and uploading them to the cloud.
 type Syncer interface {
+	Reconfigure(
+		ctx context.Context,
+		cloudConn cloud.ConnectionService,
+		captureDir string,
+		tags []string,
+	)
 	SendFileToSync(path string)
-	SetArbitraryFileTags(tags []string)
-	Close()
 	MarkInProgress(path string) bool
 	UnmarkInProgress(path string)
 }
 
+type config struct {
+	client     v1.DataSyncServiceClient
+	partID     string
+	captureDir string
+	fileTags   []string
+
+	// For diffing/regenerating `client` and `partID`
+	cloudConn cloud.ConnectionService
+}
+
 // syncer is responsible for uploading files in captureDir to the cloud.
 type syncer struct {
-	partID            string
-	client            v1.DataSyncServiceClient
-	logger            logging.Logger
-	backgroundWorkers sync.WaitGroup
-	fileTags          []string
+	logger logging.Logger
 
-	isAlive      context.Context
+	config atomic.Pointer[config]
+
+	isAliveCtx   context.Context
 	progressLock sync.Mutex
 	inProgress   map[string]bool
 
 	filesToSync chan string
-
-	captureDir string
 }
 
 // SyncerConstructor is a function for building a Manager.
 type SyncerConstructor func(isAlive context.Context, filesToSync chan string, logger logging.Logger) (Syncer, error)
 
 // NewSyncer returns a new syncer.
-func NewSyncer(isAlive context.Context, filesToSync chan string, logger logging.Logger) (Syncer, error) {
+func NewSyncer(isAliveCtx context.Context, filesToSync chan string, logger logging.Logger) (Syncer, error) {
 	ret := syncer{
 		logger:      logger,
 		inProgress:  make(map[string]bool),
+		isAliveCtx:  isAliveCtx,
 		filesToSync: filesToSync,
 	}
+	ret.config.Store(&config{})
 
 	return &ret, nil
 }
 
-// Close closes all resources (goroutines) associated with s.
-func (s *syncer) Close() {
-	s.backgroundWorkers.Wait()
-}
+func (s *syncer) Reconfigure(
+	ctx context.Context,
+	cloudConn cloud.ConnectionService,
+	captureDir string,
+	tags []string,
+) {
+	oldConfig := s.config.Load()
 
-func (s *syncer) SetArbitraryFileTags(tags []string) {
-	s.fileTags = tags
+	// Make a shallow copy of the existing config.
+	newConfig := *oldConfig
+	if oldConfig.cloudConn != cloudConn {
+		ctx, cancel := context.WithTimeout(ctx, grpcConnectionTimeout)
+		defer cancel()
+
+		partID, conn, err := cloudConn.AcquireConnection(ctx)
+		if err != nil {
+			return
+		}
+
+		newConfig.cloudConn = cloudConn
+		newConfig.partID = partID
+		newConfig.client = v1.NewDataSyncServiceClient(conn)
+	}
+
+	newConfig.captureDir = captureDir
+	newConfig.fileTags = tags
+
+	s.config.Store(&newConfig)
 }
 
 func (s *syncer) SendFileToSync(path string) {
 	select {
 	case s.filesToSync <- path:
 		return
-	case <-s.isAlive.Done():
+	case <-s.isAliveCtx.Done():
 		return
 	}
 }
@@ -117,7 +151,9 @@ func (s *syncer) SyncFile(path string) {
 			if err = f.Close(); err != nil {
 				s.logger.Errorw("error closing data capture file", "err", err)
 			}
-			if err := moveFailedData(f.Name(), s.captureDir); err != nil {
+
+			captureDir := s.config.Load().captureDir
+			if err := moveFailedData(f.Name(), captureDir); err != nil {
 				s.logger.Errorw("error moving corrupted data", "file", f.Name(), "err", err)
 			}
 			return
@@ -129,10 +165,13 @@ func (s *syncer) SyncFile(path string) {
 }
 
 func (s *syncer) syncDataCaptureFile(f *datacapture.File) {
+	config := s.config.Load()
+	client, partID, captureDir := config.client, config.partID, config.captureDir
+
 	uploadErr := exponentialRetry(
-		s.isAlive,
+		s.isAliveCtx,
 		func(ctx context.Context) error {
-			err := uploadDataCaptureFile(ctx, s.client, f, s.partID)
+			err := uploadDataCaptureFile(ctx, client, f, partID)
 			if err != nil && !errors.Is(err, context.Canceled) {
 				s.logger.Errorw("error uploading file", "file", f.GetPath(), "err", err)
 			}
@@ -146,7 +185,7 @@ func (s *syncer) syncDataCaptureFile(f *datacapture.File) {
 		}
 
 		if !isRetryableGRPCError(uploadErr) {
-			if err := moveFailedData(f.GetPath(), s.captureDir); err != nil {
+			if err := moveFailedData(f.GetPath(), captureDir); err != nil {
 				s.logger.Errorw("error moving corrupted data", "file", f.GetPath(), "err", err)
 			}
 		}
@@ -159,10 +198,13 @@ func (s *syncer) syncDataCaptureFile(f *datacapture.File) {
 }
 
 func (s *syncer) syncArbitraryFile(f *os.File) {
+	config := s.config.Load()
+	client, partID, fileTags := config.client, config.partID, config.fileTags
+
 	uploadErr := exponentialRetry(
-		s.isAlive,
+		s.isAliveCtx,
 		func(ctx context.Context) error {
-			uploadErr := uploadArbitraryFile(ctx, s.client, f, s.partID, s.fileTags)
+			uploadErr := uploadArbitraryFile(ctx, client, f, partID, fileTags)
 			if uploadErr != nil && !errors.Is(uploadErr, context.Canceled) {
 				s.logger.Errorw("error uploading file", "file", f.Name(), "err", uploadErr)
 			}
