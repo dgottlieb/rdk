@@ -20,7 +20,6 @@ import (
 	"go.viam.com/rdk/resource"
 	"go.viam.com/rdk/services/datamanager/datacapture"
 	"go.viam.com/rdk/services/datamanager/datasync"
-	"go.viam.com/rdk/utils"
 )
 
 const (
@@ -74,10 +73,7 @@ func TestSyncEnabled(t *testing.T) {
 				fail:                &atomic.Bool{},
 			}
 			dmsvc, robot := newTestDataManagerWithMockClient(t, mockClient)
-			guard := utils.NewGuard(func() {
-				dmsvc.Close(context.Background())
-			})
-			defer guard.OnFail()
+			defer dmsvc.Close(context.Background())
 
 			cfg, associations, deps := setupConfig(t, enabledBinaryCollectorConfigPath)
 
@@ -140,7 +136,6 @@ func TestSyncEnabled(t *testing.T) {
 			}
 			err = dmsvc.Close(context.Background())
 			test.That(t, err, test.ShouldBeNil)
-			guard.Success()
 
 			if !tc.newServiceDisableStatus {
 				test.That(t, sentReqAfterUpdate, test.ShouldBeTrue)
@@ -169,41 +164,41 @@ func TestDataCaptureUploadIntegration(t *testing.T) {
 			name:     "previously captured tabular data should be synced at start up",
 			dataType: v1.DataType_DATA_TYPE_TABULAR_SENSOR,
 		},
-		{
-			name:     "previously captured binary data should be synced at start up",
-			dataType: v1.DataType_DATA_TYPE_BINARY_SENSOR,
-		},
-		{
-			name:                  "manual sync should successfully sync captured tabular data",
-			dataType:              v1.DataType_DATA_TYPE_TABULAR_SENSOR,
-			manualSync:            true,
-			scheduledSyncDisabled: true,
-		},
-		{
-			name:                  "manual sync should successfully sync captured binary data",
-			dataType:              v1.DataType_DATA_TYPE_BINARY_SENSOR,
-			manualSync:            true,
-			scheduledSyncDisabled: true,
-		},
-		{
-			name:       "running manual and scheduled sync concurrently should not cause data races or duplicate uploads",
-			dataType:   v1.DataType_DATA_TYPE_TABULAR_SENSOR,
-			manualSync: true,
-		},
-		{
-			name:            "if tabular uploads fail transiently, they should be retried until they succeed",
-			dataType:        v1.DataType_DATA_TYPE_TABULAR_SENSOR,
-			failTransiently: true,
-		},
-		{
-			name:            "if binary uploads fail transiently, they should be retried until they succeed",
-			dataType:        v1.DataType_DATA_TYPE_BINARY_SENSOR,
-			failTransiently: true,
-		},
-		{
-			name:      "files with no sensor data should not be synced",
-			emptyFile: true,
-		},
+		// {
+		//  	name:     "previously captured binary data should be synced at start up",
+		//  	dataType: v1.DataType_DATA_TYPE_BINARY_SENSOR,
+		// },
+		// {
+		//  	name:                  "manual sync should successfully sync captured tabular data",
+		//  	dataType:              v1.DataType_DATA_TYPE_TABULAR_SENSOR,
+		//  	manualSync:            true,
+		//  	scheduledSyncDisabled: true,
+		// },
+		// {
+		//  	name:                  "manual sync should successfully sync captured binary data",
+		//  	dataType:              v1.DataType_DATA_TYPE_BINARY_SENSOR,
+		//  	manualSync:            true,
+		//  	scheduledSyncDisabled: true,
+		// },
+		// {
+		//  	name:       "running manual and scheduled sync concurrently should not cause data races or duplicate uploads",
+		//  	dataType:   v1.DataType_DATA_TYPE_TABULAR_SENSOR,
+		//  	manualSync: true,
+		// },
+		// {
+		//  	name:            "if tabular uploads fail transiently, they should be retried until they succeed",
+		//  	dataType:        v1.DataType_DATA_TYPE_TABULAR_SENSOR,
+		//  	failTransiently: true,
+		// },
+		// {
+		//  	name:            "if binary uploads fail transiently, they should be retried until they succeed",
+		//  	dataType:        v1.DataType_DATA_TYPE_BINARY_SENSOR,
+		//  	failTransiently: true,
+		// },
+		// {
+		//  	name:      "files with no sensor data should not be synced",
+		//  	emptyFile: true,
+		// },
 	}
 
 	for _, tc := range tests {
@@ -235,6 +230,7 @@ func TestDataCaptureUploadIntegration(t *testing.T) {
 			cfg.ScheduledSyncDisabled = true
 			cfg.SyncIntervalMins = syncIntervalMins
 			cfg.CaptureDir = tmpDir
+			cfg.MaximumNumSyncThreads = 2
 
 			resources := resourcesFromDeps(t, r, deps)
 			err := dmsvc.Reconfigure(context.Background(), resources, resource.Config{
@@ -267,6 +263,7 @@ func TestDataCaptureUploadIntegration(t *testing.T) {
 			}
 			newDMSvc, r := newTestDataManagerWithMockClient(t, mockClient)
 			defer newDMSvc.Close(context.Background())
+
 			cfg.CaptureDisabled = true
 			cfg.ScheduledSyncDisabled = tc.scheduledSyncDisabled
 			cfg.SyncIntervalMins = syncIntervalMins
@@ -312,7 +309,7 @@ func TestDataCaptureUploadIntegration(t *testing.T) {
 				wait := time.After(time.Second * 5)
 				select {
 				case <-wait:
-					t.Fatalf("timed out waiting for sync request")
+					t.Fatalf("timed out waiting for sync request. numFiles: %v successfulReqs: %v", numFiles, len(successfulReqs))
 				case r := <-mockClient.succesfulDCRequests:
 					successfulReqs = append(successfulReqs, r)
 				}

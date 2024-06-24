@@ -282,7 +282,9 @@ func newTestDataManagerWithMultipleComponents(t *testing.T, syncManager *datasyn
 	t.Helper()
 	dmCfg := &Config{
 		// set capture disabled to avoid kicking off polling twice in test
-		CaptureDisabled: true,
+		CaptureDisabled:       true,
+		MaximumNumSyncThreads: 2,
+		SyncIntervalMins:      syncIntervalMins,
 	}
 	cfgService := resource.Config{
 		API:                 datamanager.API,

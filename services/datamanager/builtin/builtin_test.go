@@ -73,7 +73,10 @@ func syncerFromClient(client *MockDataSyncServiceClient) datasync.Syncer {
 
 func newTestDataManager(t *testing.T) (*builtIn, robot.Robot) {
 	t.Helper()
-	dmCfg := &Config{}
+	dmCfg := &Config{
+		MaximumNumSyncThreads: 2,
+		SyncIntervalMins:      syncIntervalMins,
+	}
 	cfgService := resource.Config{
 		API:                 datamanager.API,
 		ConvertedAttributes: dmCfg,
@@ -100,6 +103,7 @@ func newTestDataManagerWithMockClient(t *testing.T, mockClient MockDataSyncServi
 	t.Helper()
 	dmCfg := &Config{
 		MaximumNumSyncThreads: 2,
+		SyncIntervalMins:      syncIntervalMins,
 	}
 	cfgService := resource.Config{
 		API:                 datamanager.API,

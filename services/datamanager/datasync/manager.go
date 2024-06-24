@@ -72,6 +72,7 @@ type SyncManager struct {
 	// New
 	isAliveCtx context.Context
 	cancelSync context.CancelFunc
+	closeOnce  sync.Once
 }
 
 func (sm *SyncManager) Syncer() Syncer {
@@ -190,9 +191,13 @@ func readyToSync(ctx context.Context, selectiveSyncer selectiveSyncer, logger lo
 }
 
 func (sm *SyncManager) Close(giveupCtx context.Context) {
-	sm.cancelSync()
-	sm.waitGroup.Wait()
-	close(sm.filesToSync)
+	// Tests tend to both defer a `Close` in addition to explicitly `Close`ing. Closing a channel
+	// twice is a panic. We avoid that by using a `sync.Once`
+	sm.closeOnce.Do(func() {
+		sm.cancelSync()
+		sm.waitGroup.Wait()
+		close(sm.filesToSync)
+	})
 }
 
 // TODO: Determine desired behavior if sync is disabled. Do we wan to allow manual syncs, then?

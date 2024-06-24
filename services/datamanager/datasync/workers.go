@@ -18,7 +18,7 @@ type Workers struct {
 // NewWorkers returns an object that manages goroutines of sync work items. The returned object is
 // dormant until `SetNumWorkers` is invoked with a positive integer.
 func NewWorkers(singleWorkItemFn func() bool, parentWaitGroup *sync.WaitGroup, logger logging.Logger) *Workers {
-	return &Workers{singleWorkItemFn: singleWorkItemFn, parentWaitGroup: parentWaitGroup, logger: logger}
+	return &Workers{singleWorkItemFn: singleWorkItemFn, parentWaitGroup: parentWaitGroup, requestedNumWorkers: -1, logger: logger}
 }
 
 // SetNumWorkers changes the intended pool size of worker goroutines.
@@ -35,11 +35,14 @@ func (workers *Workers) SetNumWorkers(requestedNumWorkers int) {
 	if workers.requestedNumWorkers == requestedNumWorkers {
 		return
 	}
-	workers.requestedNumWorkers = requestedNumWorkers
 
-	workers.logger.Infow("Changing number of datasync workers",
-		"oldNumWorkers", workers.requestedNumWorkers,
-		"newNumWorkers", requestedNumWorkers)
+	if workers.requestedNumWorkers != -1 {
+		workers.logger.Infow("Changing number of datasync workers",
+			"oldNumWorkers", workers.requestedNumWorkers,
+			"newNumWorkers", requestedNumWorkers)
+	}
+
+	workers.requestedNumWorkers = requestedNumWorkers
 
 	for toAdd := workers.numWorkers; toAdd < requestedNumWorkers; toAdd++ {
 		workers.spawnWorker()
