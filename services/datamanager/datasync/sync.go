@@ -53,7 +53,8 @@ type syncer struct {
 	progressLock sync.Mutex
 	inProgress   map[string]bool
 
-	logger logging.Logger
+	logger     logging.Logger
+	mockClient v1.DataSyncServiceClient
 }
 
 // NewSyncer returns a new syncer.
@@ -104,6 +105,9 @@ func (s *syncer) Reconfigure(
 
 	newConfig.captureDir = captureDir
 	newConfig.fileTags = tags
+	if s.mockClient != nil {
+		newConfig.client = s.mockClient
+	}
 
 	s.config.Store(&newConfig)
 }
@@ -231,6 +235,7 @@ func (s *syncer) UnmarkInProgress(path string) {
 }
 
 func (s *syncer) UseMockClient(client v1.DataSyncServiceClient) {
+	s.mockClient = client
 	cfg := s.config.Load()
 	cfgCopy := *cfg
 	cfgCopy.client = client

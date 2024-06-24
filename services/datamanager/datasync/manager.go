@@ -2,7 +2,6 @@ package datasync
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"net"
 	"os"
@@ -63,12 +62,12 @@ type SyncManager struct {
 
 	syncDisabled           bool
 	syncIntervalMins       float64
-	captureDir             string
-	additionalSyncPaths    []string
+	syncPaths              []string
 	fileLastModifiedMillis int
 	filesToSync            chan string
 	// Dan: Rename to performSyncSensor?
 	syncSensor selectiveSyncer
+	reconfig   chan struct{}
 
 	// New
 	isAliveCtx context.Context
@@ -85,7 +84,7 @@ func NewManager(logger logging.Logger, clk clock.Clock) *SyncManager {
 	return NewManagerWithSyncer(NewSyncer(logger), logger, clk)
 }
 
-func NewManagerWithSyncer(sync Syncer, logger logging.Logger, clk clock.Clock) *SyncManager {
+func NewManagerWithSyncer(syncer Syncer, logger logging.Logger, clk clock.Clock) *SyncManager {
 	isAliveCtx, cancelSync := context.WithCancel(context.Background())
 	ret := &SyncManager{
 		isAliveCtx:  isAliveCtx,
@@ -93,7 +92,8 @@ func NewManagerWithSyncer(sync Syncer, logger logging.Logger, clk clock.Clock) *
 		logger:      logger,
 		clk:         clk,
 		filesToSync: make(chan string, 1000),
-		syncer:      NewSyncer(logger),
+		syncer:      syncer,
+		reconfig:    make(chan struct{}, 1),
 	}
 
 	ret.workers = NewWorkers(func() bool {
@@ -126,8 +126,7 @@ func (sm *SyncManager) Reconfigure(ctx context.Context, deps resource.Dependenci
 	// Dan: Consider logging state transitions of these member variables.
 	sm.syncDisabled = syncConfig.ScheduledSyncDisabled
 	sm.syncIntervalMins = syncConfig.SyncIntervalMins
-	sm.captureDir = syncConfig.CaptureDir
-	sm.additionalSyncPaths = syncConfig.AdditionalSyncPaths
+	sm.syncPaths = append([]string{syncConfig.CaptureDir}, syncConfig.AdditionalSyncPaths...)
 	sm.fileLastModifiedMillis = syncConfig.FileLastModifiedMillis
 
 	numSyncThreads := syncConfig.MaximumNumSyncThreads
@@ -147,19 +146,15 @@ func (sm *SyncManager) Reconfigure(ctx context.Context, deps resource.Dependenci
 		sm.syncSensor = nil
 	}
 
-	// if sm.syncer == nil {
-	//  	sm.syncer, err = sm.syncerConstructor(sm.isAliveCtx, sm.filesToSync, sm.logger)
-	// }
+	sm.syncer.Reconfigure(
+		ctx,
+		syncConfig.CloudConnSvc,
+		syncConfig.CaptureDir,
+		syncConfig.Tags,
+	)
 
-	// Dan: TODO -- manage syncThreads here -- syncer will just deal with reading files/pushing to
-	// web.
-	if sm.syncer != nil {
-		sm.syncer.Reconfigure(
-			ctx,
-			syncConfig.CloudConnSvc,
-			syncConfig.CaptureDir,
-			syncConfig.Tags,
-		)
+	select {
+	case sm.reconfig <- struct{}{}:
 	}
 
 	return nil
@@ -209,10 +204,9 @@ func (sm *SyncManager) Close(giveupCtx context.Context) {
 func (sm *SyncManager) Sync(ctx context.Context, _ map[string]interface{}) error {
 	sm.mu.Lock()
 	fileLastModifiedMillis := sm.fileLastModifiedMillis
-	syncPaths := sm.additionalSyncPaths
+	syncPaths := sm.syncPaths
 	sm.mu.Unlock()
 
-	fmt.Println("Getting all files")
 	// Retrieve all files in capture dir and send them to the syncer
 	sm.getAllFilesToSync(ctx, syncPaths, fileLastModifiedMillis)
 
@@ -230,7 +224,6 @@ func (sm *SyncManager) SyncIntervalWorker() {
 	var currSyncIntervalMins float64
 	var tickerCh <-chan time.Time
 	for {
-		fmt.Println("Locking")
 		sm.mu.Lock()
 		syncDisabled := sm.syncDisabled
 		configSyncIntervalMins := sm.syncIntervalMins
@@ -245,26 +238,22 @@ func (sm *SyncManager) SyncIntervalWorker() {
 			// If the sync interval changed, recreate the ticker with the new value. For floats we
 			// check if the values are within some epsilon rather than using equality.
 			intervalMillis := 60000.0 * configSyncIntervalMins
-			fmt.Println("Config:", configSyncIntervalMins, "Millis num:", intervalMillis)
-			fmt.Printf("Creating ticker. Curr: %v Prev: %v ClkPtr: %p\n", currSyncIntervalMins, configSyncIntervalMins, sm.clk)
 			ticker = sm.clk.Ticker(time.Millisecond * time.Duration(intervalMillis))
 			tickerCh = ticker.C
 
 			currSyncIntervalMins = configSyncIntervalMins
 		}
 
-		fmt.Println("Selecting")
 		select {
 		case <-sm.isAliveCtx.Done():
-			fmt.Println("Returning")
 			return
 		case tm := <-tickerCh:
-			fmt.Println("Ticking")
-			sm.logger.Infow("Datasync interval hit", "tickerTime", tm, "syncEnabled", !syncDisabled)
+			sm.logger.Debugw("Datasync interval hit", "tickerTime", tm, "syncEnabled", !syncDisabled)
 			if syncDisabled {
 				continue
 			}
 			sm.uploadData()
+		case <-sm.reconfig:
 		}
 	}
 }
@@ -285,7 +274,6 @@ func (sm *SyncManager) uploadData() {
 func (sm *SyncManager) getAllFilesToSync(ctx context.Context, dirs []string, lastModifiedMillis int) {
 	for _, dir := range dirs {
 		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-			fmt.Println("Found:", path)
 			if ctx.Err() != nil {
 				return filepath.SkipAll
 			}

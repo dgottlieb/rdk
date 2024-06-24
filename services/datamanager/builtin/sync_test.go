@@ -2,11 +2,9 @@ package builtin
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"runtime/debug"
 	"sort"
 	"sync/atomic"
 	"testing"
@@ -99,7 +97,6 @@ func TestSyncEnabled(t *testing.T) {
 			mockClock.Add(captureInterval)
 			waitForCaptureFilesToExceedNFiles(tmpDir, 0, logger)
 			mockClock.Add(syncInterval)
-			fmt.Printf("Bump clock: %p Global: %p\n", mockClock, clock)
 			var sentReq bool
 			wait := time.After(time.Second)
 			select {
@@ -844,8 +841,6 @@ func (c MockDataSyncServiceClient) DataCaptureUpload(
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case c.succesfulDCRequests <- ur:
-		fmt.Println("Added request:", ur)
-		debug.PrintStack()
 		return &v1.DataCaptureUploadResponse{}, nil
 	}
 }
