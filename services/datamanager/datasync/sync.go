@@ -44,7 +44,7 @@ type Syncer interface {
 		captureDir string,
 		tags []string,
 	)
-	SendFileToSync(path string)
+	SyncFile(path string)
 	MarkInProgress(path string) bool
 	UnmarkInProgress(path string)
 }
@@ -119,12 +119,6 @@ func (s *syncer) Reconfigure(
 }
 
 func (s *syncer) SendFileToSync(path string) {
-	select {
-	case s.filesToSync <- path:
-		return
-	case <-s.isAliveCtx.Done():
-		return
-	}
 }
 
 func (s *syncer) SyncFile(path string) {
