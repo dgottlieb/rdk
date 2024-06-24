@@ -73,9 +73,6 @@ type SyncManager struct {
 	// New
 	isAliveCtx context.Context
 	cancelSync context.CancelFunc
-
-	// Dead
-	syncTicker *clock.Ticker
 }
 
 func (sm *SyncManager) Syncer() Syncer {
@@ -99,15 +96,16 @@ func NewManagerWithSyncer(sync Syncer, logger logging.Logger, clk clock.Clock) *
 		syncer:      NewSyncer(logger),
 	}
 
-	ret.workers = NewWorkers(func() {
+	ret.workers = NewWorkers(func() bool {
 		select {
 		case <-isAliveCtx.Done():
-			return
+			return false
 		case path, ok := <-ret.filesToSync:
 			if !ok {
-				return
+				return false
 			}
 			ret.syncer.SyncFile(isAliveCtx, path)
+			return true
 		}
 	}, &ret.waitGroup, logger)
 
@@ -214,6 +212,7 @@ func (sm *SyncManager) Sync(ctx context.Context, _ map[string]interface{}) error
 	syncPaths := sm.additionalSyncPaths
 	sm.mu.Unlock()
 
+	fmt.Println("Getting all files")
 	// Retrieve all files in capture dir and send them to the syncer
 	sm.getAllFilesToSync(ctx, syncPaths, fileLastModifiedMillis)
 
@@ -223,7 +222,6 @@ func (sm *SyncManager) Sync(ctx context.Context, _ map[string]interface{}) error
 func (sm *SyncManager) SyncIntervalWorker() {
 	var ticker *clock.Ticker
 	defer func() {
-		fmt.Println("Worker quit")
 		if ticker != nil {
 			ticker.Stop()
 		}
@@ -232,16 +230,11 @@ func (sm *SyncManager) SyncIntervalWorker() {
 	var currSyncIntervalMins float64
 	var tickerCh <-chan time.Time
 	for {
+		fmt.Println("Locking")
 		sm.mu.Lock()
-		syncer := sm.syncer
 		syncDisabled := sm.syncDisabled
 		configSyncIntervalMins := sm.syncIntervalMins
 		sm.mu.Unlock()
-
-		if syncer == nil {
-			// We must not create work until `Reconfigure` is called.
-			continue
-		}
 
 		if syncDisabled || configSyncIntervalMins < 1e-9 {
 			// If sync is disabled, recheck config values roughly once cloud config refresh.
@@ -252,17 +245,22 @@ func (sm *SyncManager) SyncIntervalWorker() {
 			// If the sync interval changed, recreate the ticker with the new value. For floats we
 			// check if the values are within some epsilon rather than using equality.
 			intervalMillis := 60000.0 * configSyncIntervalMins
-			ticker = sm.clk.Ticker(time.Duration(intervalMillis) * time.Millisecond)
+			fmt.Println("Config:", configSyncIntervalMins, "Millis num:", intervalMillis)
+			fmt.Printf("Creating ticker. Curr: %v Prev: %v ClkPtr: %p\n", currSyncIntervalMins, configSyncIntervalMins, sm.clk)
+			ticker = sm.clk.Ticker(time.Millisecond * time.Duration(intervalMillis))
 			tickerCh = ticker.C
 
 			currSyncIntervalMins = configSyncIntervalMins
 		}
 
+		fmt.Println("Selecting")
 		select {
 		case <-sm.isAliveCtx.Done():
+			fmt.Println("Returning")
 			return
 		case tm := <-tickerCh:
-			sm.logger.Debugw("Datasync interval hit", "tickerTime", tm, "syncEnabled", !syncDisabled)
+			fmt.Println("Ticking")
+			sm.logger.Infow("Datasync interval hit", "tickerTime", tm, "syncEnabled", !syncDisabled)
 			if syncDisabled {
 				continue
 			}
@@ -287,6 +285,7 @@ func (sm *SyncManager) uploadData() {
 func (sm *SyncManager) getAllFilesToSync(ctx context.Context, dirs []string, lastModifiedMillis int) {
 	for _, dir := range dirs {
 		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			fmt.Println("Found:", path)
 			if ctx.Err() != nil {
 				return filepath.SkipAll
 			}
@@ -335,21 +334,3 @@ func isOffline(ctx context.Context) bool {
 	// If there's an error, the system is likely offline.
 	return err != nil
 }
-
-// func (sm *SyncManager) SetSyncerConstructor(fn SyncerConstructor) {
-//  	sm.syncerConstructor = fn
-// }
-
-// Replace existing callers with Reconfigure + synconfig?
-// func (sm *SyncManager) SetFileLastModifiedMillis(s int) {
-//  	sm.fileLastModifiedMillis = s
-// }
-
-func (sm *SyncManager) SyncTicker() *clock.Ticker {
-	return sm.syncTicker
-}
-
-// Replace with Reconfigure + synconfig?
-// func (sm *SyncManager) MaxSyncThreads() int {
-//  	return sm.maxSyncThreads
-// }

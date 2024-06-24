@@ -98,7 +98,9 @@ func newTestDataManager(t *testing.T) (*builtIn, robot.Robot) {
 
 func newTestDataManagerWithMockClient(t *testing.T, mockClient MockDataSyncServiceClient) (*builtIn, robot.Robot) {
 	t.Helper()
-	dmCfg := &Config{}
+	dmCfg := &Config{
+		MaximumNumSyncThreads: 2,
+	}
 	cfgService := resource.Config{
 		API:                 datamanager.API,
 		ConvertedAttributes: dmCfg,

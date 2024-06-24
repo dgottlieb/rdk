@@ -11,13 +11,13 @@ type Workers struct {
 	parentWaitGroup     *sync.WaitGroup
 	numWorkers          int
 	requestedNumWorkers int
-	singleWorkItemFn    func()
+	singleWorkItemFn    func() bool
 	logger              logging.Logger
 }
 
 // NewWorkers returns an object that manages goroutines of sync work items. The returned object is
 // dormant until `SetNumWorkers` is invoked with a positive integer.
-func NewWorkers(singleWorkItemFn func(), parentWaitGroup *sync.WaitGroup, logger logging.Logger) *Workers {
+func NewWorkers(singleWorkItemFn func() bool, parentWaitGroup *sync.WaitGroup, logger logging.Logger) *Workers {
 	return &Workers{singleWorkItemFn: singleWorkItemFn, parentWaitGroup: parentWaitGroup, logger: logger}
 }
 
@@ -42,21 +42,27 @@ func (workers *Workers) SetNumWorkers(requestedNumWorkers int) {
 		"newNumWorkers", requestedNumWorkers)
 
 	for toAdd := workers.numWorkers; toAdd < requestedNumWorkers; toAdd++ {
-		workers.numWorkers++
-		workers.parentWaitGroup.Add(1)
-		go func() {
-			defer workers.parentWaitGroup.Done()
-			for {
-				workers.mu.Lock()
-				if workers.numWorkers > workers.requestedNumWorkers {
-					workers.numWorkers--
-					workers.mu.Unlock()
-					return
-				}
-				workers.mu.Unlock()
-
-				workers.singleWorkItemFn()
-			}
-		}()
+		workers.spawnWorker()
 	}
+}
+
+func (workers *Workers) spawnWorker() {
+	workers.numWorkers++
+	workers.parentWaitGroup.Add(1)
+	go func() {
+		defer workers.parentWaitGroup.Done()
+		for {
+			workers.mu.Lock()
+			if workers.numWorkers > workers.requestedNumWorkers {
+				workers.numWorkers--
+				workers.mu.Unlock()
+				return
+			}
+			workers.mu.Unlock()
+
+			if !workers.singleWorkItemFn() {
+				break
+			}
+		}
+	}()
 }

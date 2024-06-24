@@ -2,9 +2,11 @@ package builtin
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"sync/atomic"
 	"testing"
@@ -20,6 +22,7 @@ import (
 	"go.viam.com/rdk/resource"
 	"go.viam.com/rdk/services/datamanager/datacapture"
 	"go.viam.com/rdk/services/datamanager/datasync"
+	"go.viam.com/rdk/utils"
 )
 
 const (
@@ -73,7 +76,11 @@ func TestSyncEnabled(t *testing.T) {
 				fail:                &atomic.Bool{},
 			}
 			dmsvc, robot := newTestDataManagerWithMockClient(t, mockClient)
-			defer dmsvc.Close(context.Background())
+			guard := utils.NewGuard(func() {
+				dmsvc.Close(context.Background())
+			})
+			defer guard.OnFail()
+
 			cfg, associations, deps := setupConfig(t, enabledBinaryCollectorConfigPath)
 
 			// Set up service config.
@@ -81,6 +88,7 @@ func TestSyncEnabled(t *testing.T) {
 			cfg.ScheduledSyncDisabled = tc.initialServiceDisableStatus
 			cfg.CaptureDir = tmpDir
 			cfg.SyncIntervalMins = syncIntervalMins
+			cfg.MaximumNumSyncThreads = 2
 
 			resources := resourcesFromDeps(t, robot, deps)
 			err := dmsvc.Reconfigure(context.Background(), resources, resource.Config{
@@ -91,6 +99,7 @@ func TestSyncEnabled(t *testing.T) {
 			mockClock.Add(captureInterval)
 			waitForCaptureFilesToExceedNFiles(tmpDir, 0, logger)
 			mockClock.Add(syncInterval)
+			fmt.Printf("Bump clock: %p Global: %p\n", mockClock, clock)
 			var sentReq bool
 			wait := time.After(time.Second)
 			select {
@@ -134,6 +143,7 @@ func TestSyncEnabled(t *testing.T) {
 			}
 			err = dmsvc.Close(context.Background())
 			test.That(t, err, test.ShouldBeNil)
+			guard.Success()
 
 			if !tc.newServiceDisableStatus {
 				test.That(t, sentReqAfterUpdate, test.ShouldBeTrue)
@@ -684,8 +694,6 @@ func TestSyncConfigUpdateBehavior(t *testing.T) {
 			})
 			test.That(t, err, test.ShouldBeNil)
 
-			initTicker := dmsvc.syncManager.SyncTicker()
-
 			// Reconfigure the dmsvc with new sync configs
 			cfg.ScheduledSyncDisabled = tc.newSyncDisabled
 			cfg.SyncIntervalMins = tc.newSyncIntervalMins
@@ -697,7 +705,6 @@ func TestSyncConfigUpdateBehavior(t *testing.T) {
 			})
 			test.That(t, err, test.ShouldBeNil)
 
-			newTicker := dmsvc.syncManager.SyncTicker()
 			newSyncer := dmsvc.syncManager.Syncer()
 			newFileDeletionBackgroundWorker := dmsvc.fileDeletionBackgroundWorkers
 
@@ -705,10 +712,6 @@ func TestSyncConfigUpdateBehavior(t *testing.T) {
 				test.That(t, newSyncer, test.ShouldBeNil)
 			}
 			test.That(t, newFileDeletionBackgroundWorker, test.ShouldNotBeNil)
-			if tc.initSyncDisabled != tc.newSyncDisabled ||
-				tc.initSyncIntervalMins != tc.newSyncIntervalMins {
-				test.That(t, initTicker, test.ShouldNotEqual, newTicker)
-			}
 		})
 	}
 }
@@ -841,6 +844,8 @@ func (c MockDataSyncServiceClient) DataCaptureUpload(
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case c.succesfulDCRequests <- ur:
+		fmt.Println("Added request:", ur)
+		debug.PrintStack()
 		return &v1.DataCaptureUploadResponse{}, nil
 	}
 }
