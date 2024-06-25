@@ -203,6 +203,7 @@ func TestDataCaptureUploadIntegration(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			logger := logging.NewTestLogger(t)
 			// Set up server.
 			mockClock := clk.NewMock()
 			clock = mockClock
@@ -319,7 +320,7 @@ func TestDataCaptureUploadIntegration(t *testing.T) {
 			}
 
 			// Give it time to delete files after upload.
-			waitUntilNoFiles(tmpDir)
+			waitForCaptureFilesToEqualNFiles(tmpDir, 0, logger)
 			err = newDMSvc.Close(context.Background())
 			test.That(t, err, test.ShouldBeNil)
 
@@ -372,6 +373,7 @@ func TestArbitraryFileUpload(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			logger := logging.NewTestLogger(t)
 			// Set up server.
 			mockClock := clk.NewMock()
 			clock = mockClock
@@ -467,6 +469,7 @@ func TestArbitraryFileUpload(t *testing.T) {
 				}
 				test.That(t, actData, test.ShouldResemble, fileContents)
 
+				waitForCaptureFilesToEqualNFiles(additionalPathsDir, 0, logger)
 				// Validate file no longer exists.
 				test.That(t, len(getAllFileInfos(additionalPathsDir)), test.ShouldEqual, 0)
 				test.That(t, dmsvc.Close(context.Background()), test.ShouldBeNil)
@@ -615,6 +618,7 @@ func TestStreamingDCUpload(t *testing.T) {
 				}
 				test.That(t, actData, test.ShouldResemble, capturedData[0].GetBinary())
 
+				waitForCaptureFilesToEqualNFiles(tmpDir, 0, logger)
 				// Validate file no longer exists.
 				test.That(t, len(getAllFileInfos(tmpDir)), test.ShouldEqual, 0)
 			}
@@ -912,18 +916,4 @@ func (m *mockStreamingDCClient) CloseAndRecv() (*v1.StreamingDataCaptureUploadRe
 func (m *mockStreamingDCClient) CloseSend() error {
 	m.closed <- struct{}{}
 	return nil
-}
-
-func waitUntilNoFiles(dir string) {
-	totalWait := time.Second * 3
-	waitPerCheck := time.Millisecond * 10
-	iterations := int(totalWait / waitPerCheck)
-	files := getAllFileInfos(dir)
-	for i := 0; i < iterations; i++ {
-		if len(files) == 0 {
-			return
-		}
-		time.Sleep(waitPerCheck)
-		files = getAllFileInfos(dir)
-	}
 }

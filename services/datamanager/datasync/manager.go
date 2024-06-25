@@ -156,6 +156,7 @@ func (sm *SyncManager) Reconfigure(ctx context.Context, deps resource.Dependenci
 
 	select {
 	case sm.reconfig <- struct{}{}:
+	default:
 	}
 
 	return nil
