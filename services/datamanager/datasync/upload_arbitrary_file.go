@@ -2,13 +2,14 @@ package datasync
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"time"
 
 	clk "github.com/benbjohnson/clock"
-	"github.com/pkg/errors"
 	v1 "go.viam.com/api/app/datasync/v1"
 )
 
@@ -68,11 +69,11 @@ func uploadArbitraryFile(ctx context.Context, client v1.DataSyncServiceClient, f
 	}
 
 	if err := sendFileUploadRequests(ctx, stream, f); err != nil {
-		return errors.Wrapf(err, "error syncing %s", f.Name())
+		return fmt.Errorf("error syncing %s: %w", f.Name(), err)
 	}
 
 	if _, err := stream.CloseAndRecv(); err != nil {
-		return errors.Wrapf(err, "received error response while syncing %s", f.Name())
+		return fmt.Errorf("received error response while syncing %s: %w", f.Name(), err)
 	}
 
 	return nil

@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	clk "github.com/benbjohnson/clock"
-	"github.com/pkg/errors"
 	v1 "go.viam.com/api/app/datasync/v1"
 	"go.viam.com/test"
 	"google.golang.org/grpc"
@@ -72,7 +72,7 @@ func TestSyncEnabled(t *testing.T) {
 				failedDCRequests:    make(chan *v1.DataCaptureUploadRequest, 100),
 				fail:                &atomic.Bool{},
 			}
-			dmsvc, robot := newTestDataManagerWithMockClient(t, mockClient)
+			dmsvc, robot := newTestDataManager(t, TestDataManagerSettings{mockClient: &mockClient})
 			defer dmsvc.Close(context.Background())
 
 			cfg, associations, deps := setupConfig(t, enabledBinaryCollectorConfigPath)
@@ -164,41 +164,41 @@ func TestDataCaptureUploadIntegration(t *testing.T) {
 			name:     "previously captured tabular data should be synced at start up",
 			dataType: v1.DataType_DATA_TYPE_TABULAR_SENSOR,
 		},
-		// {
-		//  	name:     "previously captured binary data should be synced at start up",
-		//  	dataType: v1.DataType_DATA_TYPE_BINARY_SENSOR,
-		// },
-		// {
-		//  	name:                  "manual sync should successfully sync captured tabular data",
-		//  	dataType:              v1.DataType_DATA_TYPE_TABULAR_SENSOR,
-		//  	manualSync:            true,
-		//  	scheduledSyncDisabled: true,
-		// },
-		// {
-		//  	name:                  "manual sync should successfully sync captured binary data",
-		//  	dataType:              v1.DataType_DATA_TYPE_BINARY_SENSOR,
-		//  	manualSync:            true,
-		//  	scheduledSyncDisabled: true,
-		// },
-		// {
-		//  	name:       "running manual and scheduled sync concurrently should not cause data races or duplicate uploads",
-		//  	dataType:   v1.DataType_DATA_TYPE_TABULAR_SENSOR,
-		//  	manualSync: true,
-		// },
-		// {
-		//  	name:            "if tabular uploads fail transiently, they should be retried until they succeed",
-		//  	dataType:        v1.DataType_DATA_TYPE_TABULAR_SENSOR,
-		//  	failTransiently: true,
-		// },
-		// {
-		//  	name:            "if binary uploads fail transiently, they should be retried until they succeed",
-		//  	dataType:        v1.DataType_DATA_TYPE_BINARY_SENSOR,
-		//  	failTransiently: true,
-		// },
-		// {
-		//  	name:      "files with no sensor data should not be synced",
-		//  	emptyFile: true,
-		// },
+		{
+			name:     "previously captured binary data should be synced at start up",
+			dataType: v1.DataType_DATA_TYPE_BINARY_SENSOR,
+		},
+		{
+			name:                  "manual sync should successfully sync captured tabular data",
+			dataType:              v1.DataType_DATA_TYPE_TABULAR_SENSOR,
+			manualSync:            true,
+			scheduledSyncDisabled: true,
+		},
+		{
+			name:                  "manual sync should successfully sync captured binary data",
+			dataType:              v1.DataType_DATA_TYPE_BINARY_SENSOR,
+			manualSync:            true,
+			scheduledSyncDisabled: true,
+		},
+		{
+			name:       "running manual and scheduled sync concurrently should not cause data races or duplicate uploads",
+			dataType:   v1.DataType_DATA_TYPE_TABULAR_SENSOR,
+			manualSync: true,
+		},
+		{
+			name:            "if tabular uploads fail transiently, they should be retried until they succeed",
+			dataType:        v1.DataType_DATA_TYPE_TABULAR_SENSOR,
+			failTransiently: true,
+		},
+		{
+			name:            "if binary uploads fail transiently, they should be retried until they succeed",
+			dataType:        v1.DataType_DATA_TYPE_BINARY_SENSOR,
+			failTransiently: true,
+		},
+		{
+			name:      "files with no sensor data should not be synced",
+			emptyFile: true,
+		},
 	}
 
 	for _, tc := range tests {
@@ -209,7 +209,7 @@ func TestDataCaptureUploadIntegration(t *testing.T) {
 			tmpDir := t.TempDir()
 
 			// Set up data manager.
-			dmsvc, r := newTestDataManager(t)
+			dmsvc, r := newTestDataManager(t, TestDataManagerSettings{})
 			defer dmsvc.Close(context.Background())
 			var cfg *Config
 			var associations map[resource.Name]resource.AssociatedConfig
@@ -261,7 +261,7 @@ func TestDataCaptureUploadIntegration(t *testing.T) {
 				failedDCRequests:    make(chan *v1.DataCaptureUploadRequest, 100),
 				fail:                &atomic.Bool{},
 			}
-			newDMSvc, r := newTestDataManagerWithMockClient(t, mockClient)
+			newDMSvc, r := newTestDataManager(t, TestDataManagerSettings{mockClient: &mockClient})
 			defer newDMSvc.Close(context.Background())
 
 			cfg.CaptureDisabled = true
@@ -384,7 +384,10 @@ func TestArbitraryFileUpload(t *testing.T) {
 				fileUploads:         make(chan *mockFileUploadClient, 100),
 				fail:                &f,
 			}
-			dmsvc, r := newTestDataManagerWithMockClient(t, mockClient)
+			dmsvc, r := newTestDataManager(t, TestDataManagerSettings{
+				syncLogger: logging.NewInMemoryLogger(t),
+				mockClient: &mockClient,
+			})
 			defer dmsvc.Close(context.Background())
 			cfg, associations, deps := setupConfig(t, disabledTabularCollectorConfigPath)
 			cfg.ScheduledSyncDisabled = tc.scheduleSyncDisabled
@@ -426,7 +429,7 @@ func TestArbitraryFileUpload(t *testing.T) {
 			var fileUploads []*mockFileUploadClient
 			var urs []*v1.FileUploadRequest
 			// Get the successful requests
-			wait := time.After(time.Second * 3)
+			wait := time.After(time.Second * 1)
 			select {
 			case <-wait:
 				if !tc.serviceFail {
@@ -442,7 +445,6 @@ func TestArbitraryFileUpload(t *testing.T) {
 				}
 			}
 
-			waitUntilNoFiles(additionalPathsDir)
 			if !tc.serviceFail {
 				// Validate first metadata message.
 				test.That(t, len(fileUploads), test.ShouldEqual, 1)
@@ -508,7 +510,7 @@ func TestStreamingDCUpload(t *testing.T) {
 			tmpDir := t.TempDir()
 
 			// Set up data manager.
-			dmsvc, r := newTestDataManager(t)
+			dmsvc, r := newTestDataManager(t, TestDataManagerSettings{})
 			defer dmsvc.Close(context.Background())
 			var cfg *Config
 			var associations map[resource.Name]resource.AssociatedConfig
@@ -546,7 +548,7 @@ func TestStreamingDCUpload(t *testing.T) {
 				streamingDCUploads: make(chan *mockStreamingDCClient, 10),
 				fail:               &f,
 			}
-			newDMSvc, r := newTestDataManagerWithMockClient(t, mockClient)
+			newDMSvc, r := newTestDataManager(t, TestDataManagerSettings{mockClient: &mockClient})
 			defer newDMSvc.Close(context.Background())
 			cfg.CaptureDisabled = true
 			cfg.ScheduledSyncDisabled = true
@@ -565,7 +567,7 @@ func TestStreamingDCUpload(t *testing.T) {
 			var uploads []*mockStreamingDCClient
 			var urs []*v1.StreamingDataCaptureUploadRequest
 			// Get the successful requests
-			wait := time.After(time.Second * 3)
+			wait := time.After(time.Second)
 			select {
 			case <-wait:
 				if !tc.serviceFail {
@@ -580,11 +582,10 @@ func TestStreamingDCUpload(t *testing.T) {
 					urs = append(urs, r.reqs...)
 				}
 			}
-			waitUntilNoFiles(tmpDir)
 
-			// Validate error and URs.
-			remainingFiles := getAllFilePaths(tmpDir)
 			if tc.serviceFail {
+				// Validate error and URs.
+				remainingFiles := getAllFilePaths(tmpDir)
 				// Validate no files were successfully uploaded.
 				test.That(t, len(uploads), test.ShouldEqual, 0)
 				// Error case, file should not be deleted.
@@ -671,7 +672,7 @@ func TestSyncConfigUpdateBehavior(t *testing.T) {
 				failedDCRequests:    make(chan *v1.DataCaptureUploadRequest, 100),
 				fail:                &atomic.Bool{},
 			}
-			dmsvc, r := newTestDataManagerWithMockClient(t, mockClient)
+			dmsvc, r := newTestDataManager(t, TestDataManagerSettings{mockClient: &mockClient})
 			defer dmsvc.Close(context.Background())
 			cfg, associations, deps := setupConfig(t, enabledBinaryCollectorConfigPath)
 

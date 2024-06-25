@@ -2,10 +2,11 @@ package datasync
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/docker/go-units"
 	"github.com/go-viper/mapstructure/v2"
-	"github.com/pkg/errors"
 	v1 "go.viam.com/api/app/datasync/v1"
 	pb "go.viam.com/api/component/camera/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -21,7 +22,7 @@ func uploadDataCaptureFile(ctx context.Context, client v1.DataSyncServiceClient,
 	md := f.ReadMetadata()
 	sensorData, err := datacapture.SensorDataFromFile(f)
 	if err != nil {
-		return errors.Wrap(err, "error reading sensor data from file")
+		return fmt.Errorf("error reading sensor data from file: %w", err)
 	}
 
 	// Do not attempt to upload a file without any sensor readings.
@@ -102,7 +103,7 @@ func uploadSensorData(ctx context.Context, client v1.DataSyncServiceClient, uplo
 	if uploadMD.GetType() == v1.DataType_DATA_TYPE_BINARY_SENSOR && fileSize > MaxUnaryFileSize {
 		c, err := client.StreamingDataCaptureUpload(ctx)
 		if err != nil {
-			return errors.Wrap(err, "error creating upload client")
+			return fmt.Errorf("error creating upload client: %w", err)
 		}
 
 		toUpload := sensorData[0]
@@ -120,11 +121,11 @@ func uploadSensorData(ctx context.Context, client v1.DataSyncServiceClient, uplo
 
 		// Then call the function to send the rest.
 		if err := sendStreamingDCRequests(ctx, c, toUpload.GetBinary()); err != nil {
-			return errors.Wrap(err, "error sending streaming data capture requests")
+			return fmt.Errorf("error sending streaming data capture requests: %w", err)
 		}
 
 		if _, err := c.CloseAndRecv(); err != nil {
-			return errors.Wrap(err, "error receiving upload response")
+			return fmt.Errorf("error receiving upload response: %w", err)
 		}
 	} else {
 		ur := &v1.DataCaptureUploadRequest{

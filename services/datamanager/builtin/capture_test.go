@@ -129,7 +129,7 @@ func TestDataCaptureEnabled(t *testing.T) {
 			initConfig.CaptureDir = initCaptureDir
 
 			// Build and start data manager.
-			dmsvc, r := newTestDataManager(t)
+			dmsvc, r := newTestDataManager(t, TestDataManagerSettings{})
 			defer func() {
 				test.That(t, dmsvc.Close(context.Background()), test.ShouldBeNil)
 			}()
@@ -209,7 +209,7 @@ func TestSwitchResource(t *testing.T) {
 	config.CaptureDir = captureDir
 
 	// Build and start data manager.
-	dmsvc, r := newTestDataManager(t)
+	dmsvc, r := newTestDataManager(t, TestDataManagerSettings{})
 	defer func() {
 		test.That(t, dmsvc.Close(context.Background()), test.ShouldBeNil)
 	}()

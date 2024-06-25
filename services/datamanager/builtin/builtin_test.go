@@ -71,35 +71,12 @@ func syncerFromClient(client *MockDataSyncServiceClient) datasync.Syncer {
 	return nil
 }
 
-func newTestDataManager(t *testing.T) (*builtIn, robot.Robot) {
-	t.Helper()
-	dmCfg := &Config{
-		MaximumNumSyncThreads: 2,
-		SyncIntervalMins:      syncIntervalMins,
-	}
-	cfgService := resource.Config{
-		API:                 datamanager.API,
-		ConvertedAttributes: dmCfg,
-	}
-	logger := logging.NewTestLogger(t)
-
-	// Create local robot with injected arm and remote.
-	mainRobot := getInjectedRobot()
-	remoteRobot := getInjectedRobot()
-	mainRobot.RemoteByNameFunc = func(name string) (robot.Robot, bool) {
-		return remoteRobot, true
-	}
-
-	resources := resourcesFromDeps(t, mainRobot, []string{cloud.InternalServiceName.String()})
-	svc, err := NewBuiltIn(context.Background(), resources, cfgService, logger)
-	if err != nil {
-		t.Log(err)
-		t.FailNow()
-	}
-	return svc, mainRobot
+type TestDataManagerSettings struct {
+	syncLogger logging.Logger
+	mockClient *MockDataSyncServiceClient
 }
 
-func newTestDataManagerWithMockClient(t *testing.T, mockClient MockDataSyncServiceClient) (*builtIn, robot.Robot) {
+func newTestDataManager(t *testing.T, settings TestDataManagerSettings) (*builtIn, robot.Robot) {
 	t.Helper()
 	dmCfg := &Config{
 		MaximumNumSyncThreads: 2,
@@ -110,6 +87,9 @@ func newTestDataManagerWithMockClient(t *testing.T, mockClient MockDataSyncServi
 		ConvertedAttributes: dmCfg,
 	}
 	logger := logging.NewTestLogger(t)
+	if settings.syncLogger != nil {
+		logger = settings.syncLogger
+	}
 
 	// Create local robot with injected arm and remote.
 	mainRobot := getInjectedRobot()
@@ -122,7 +102,9 @@ func newTestDataManagerWithMockClient(t *testing.T, mockClient MockDataSyncServi
 
 	syncLogger := logger.Sublogger("sync")
 	syncer := datasync.NewSyncer(syncLogger)
-	syncer.UseMockClient(mockClient)
+	if settings.mockClient != nil {
+		syncer.UseMockClient(settings.mockClient)
+	}
 	syncManager := datasync.NewManagerWithSyncer(syncer, syncLogger, clock)
 	svc, err := NewBuiltInWithSyncManager(context.Background(), resources, cfgService, syncManager, logger)
 	if err != nil {
@@ -175,7 +157,7 @@ func TestEmptyConfig(t *testing.T) {
 }
 
 func TestUntrustedEnv(t *testing.T) {
-	dmsvc, r := newTestDataManager(t)
+	dmsvc, r := newTestDataManager(t, TestDataManagerSettings{})
 	defer dmsvc.Close(context.Background())
 
 	config, associations, deps := setupConfig(t, enabledTabularCollectorConfigPath)
