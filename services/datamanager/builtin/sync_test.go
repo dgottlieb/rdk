@@ -209,7 +209,7 @@ func TestDataCaptureUploadIntegration(t *testing.T) {
 			tmpDir := t.TempDir()
 
 			// Set up data manager.
-			dmsvc, r := newTestDataManager(t, TestDataManagerSettings{})
+			dmsvc, r := newTestDataManager(t, TestDataManagerSettings{syncLogger: logging.NewInMemoryLogger(t)})
 			defer dmsvc.Close(context.Background())
 			var cfg *Config
 			var associations map[resource.Name]resource.AssociatedConfig
@@ -261,7 +261,10 @@ func TestDataCaptureUploadIntegration(t *testing.T) {
 				failedDCRequests:    make(chan *v1.DataCaptureUploadRequest, 100),
 				fail:                &atomic.Bool{},
 			}
-			newDMSvc, r := newTestDataManager(t, TestDataManagerSettings{mockClient: &mockClient})
+			newDMSvc, r := newTestDataManager(t, TestDataManagerSettings{
+				syncLogger: logging.NewInMemoryLogger(t),
+				mockClient: &mockClient,
+			})
 			defer newDMSvc.Close(context.Background())
 
 			cfg.CaptureDisabled = true
@@ -510,7 +513,7 @@ func TestStreamingDCUpload(t *testing.T) {
 			tmpDir := t.TempDir()
 
 			// Set up data manager.
-			dmsvc, r := newTestDataManager(t, TestDataManagerSettings{})
+			dmsvc, r := newTestDataManager(t, TestDataManagerSettings{syncLogger: logging.NewInMemoryLogger(t)})
 			defer dmsvc.Close(context.Background())
 			var cfg *Config
 			var associations map[resource.Name]resource.AssociatedConfig
@@ -548,7 +551,10 @@ func TestStreamingDCUpload(t *testing.T) {
 				streamingDCUploads: make(chan *mockStreamingDCClient, 10),
 				fail:               &f,
 			}
-			newDMSvc, r := newTestDataManager(t, TestDataManagerSettings{mockClient: &mockClient})
+			newDMSvc, r := newTestDataManager(t, TestDataManagerSettings{
+				syncLogger: logging.NewInMemoryLogger(t),
+				mockClient: &mockClient,
+			})
 			defer newDMSvc.Close(context.Background())
 			cfg.CaptureDisabled = true
 			cfg.ScheduledSyncDisabled = true
