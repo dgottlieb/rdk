@@ -15,6 +15,7 @@ import (
 	"github.com/pkg/errors"
 	v1 "go.viam.com/api/app/datasync/v1"
 
+	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/protoutils"
 	"go.viam.com/rdk/resource"
 	"go.viam.com/rdk/utils"
@@ -84,6 +85,7 @@ func ReadFile(f *os.File) (*File, error) {
 
 // NewFile creates a new File with the specified md in the specified directory.
 func NewFile(dir string, md *v1.DataCaptureMetadata) (*File, error) {
+	logging.Global().Infow("DataCapture NewFile", "path", dir)
 	fileName := FilePathWithReplacedReservedChars(
 		filepath.Join(dir, getFileTimestampName()) + InProgressFileExt)
 	//nolint:gosec
@@ -189,6 +191,7 @@ func (f *File) Close() error {
 	// Rename file to indicate that it is done being written.
 	withoutExt := strings.TrimSuffix(f.file.Name(), filepath.Ext(f.file.Name()))
 	newName := withoutExt + FileExt
+	logging.Global().Infow("DataCapture Close file", "inProgName", f.file.Name(), "doneName", newName)
 	if err := os.Rename(f.file.Name(), newName); err != nil {
 		return err
 	}

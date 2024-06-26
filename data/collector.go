@@ -151,7 +151,7 @@ func (c *collector) Collect() {
 // avoid wasting CPU on a thread that's idling for the vast majority of the time.
 // [0]: https://www.mail-archive.com/golang-nuts@googlegroups.com/msg46002.html
 func (c *collector) capture(started chan struct{}) {
-	if c.interval < sleepCaptureCutoff {
+	if c.interval < 0 { //sleepCaptureCutoff {
 		c.sleepBasedCapture(started)
 	} else {
 		c.tickerBasedCapture(started)
@@ -191,6 +191,7 @@ func (c *collector) sleepBasedCapture(started chan struct{}) {
 }
 
 func (c *collector) tickerBasedCapture(started chan struct{}) {
+	c.logger.Infow("Creating ticker based capture", "collector", fmt.Sprintf("%p", c), "interval: ", c.interval.Milliseconds(), "now", c.clock.Now().UnixMilli())
 	ticker := c.clock.Ticker(c.interval)
 	defer ticker.Stop()
 	var captureWorkers sync.WaitGroup
@@ -209,6 +210,7 @@ func (c *collector) tickerBasedCapture(started chan struct{}) {
 			close(c.captureResults)
 			return
 		case <-ticker.C:
+			c.logger.Infow("Collector ticked", "collector", fmt.Sprintf("%p", c), "now", c.clock.Now().UnixMilli())
 			captureWorkers.Add(1)
 			utils.PanicCapturingGo(func() {
 				defer captureWorkers.Done()

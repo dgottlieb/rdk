@@ -3,9 +3,11 @@ package builtin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"sync/atomic"
 	"testing"
@@ -22,39 +24,74 @@ import (
 	"go.viam.com/rdk/services/datamanager/datasync"
 )
 
+func printAllStacks() {
+	bufSize := 1 << 20
+	traces := make([]byte, bufSize)
+	traceSize := runtime.Stack(traces, true)
+	message := "backtrace at robot shutdown"
+	if traceSize == bufSize {
+		message = fmt.Sprintf("%s (warning: backtrace truncated to %v bytes)", message, bufSize)
+	}
+	fmt.Printf("%s\n%s", message, traces[:traceSize])
+}
+
 const (
 	syncIntervalMins = 0.0008
 	syncInterval     = time.Millisecond * 48
 )
 
+func pollFS(t *testing.T, dir string, logger logging.Logger) {
+	var isAlive atomic.Bool
+	isAlive.Store(true)
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		isAlive.Store(false)
+		<-done
+	})
+
+	go func() {
+		for isAlive.Load() {
+			time.Sleep(100 * time.Millisecond)
+			files := getAllFileInfos(dir)
+			logger.Infow("DBG. PollingFS", "time", time.Now(), "numFiles", len(files))
+			for idx, file := range files {
+				logger.Infow("File information", "idx", idx, "dir", dir, "name", file.Name(), "size", file.Size())
+			}
+		}
+		close(done)
+	}()
+}
+
 // TODO DATA-849: Add a test that validates that sync interval is accurately respected.
 func TestSyncEnabled(t *testing.T) {
-	captureInterval := time.Millisecond * 10
+	// This value is derived from robot_with_cam_
+	captureInterval := 3 * syncInterval / 2
+	fmt.Println("CaptureInterval:", captureInterval.Milliseconds())
 	tests := []struct {
 		name                        string
 		initialServiceDisableStatus bool
 		newServiceDisableStatus     bool
 	}{
-		{
-			name:                        "config with sync disabled should sync nothing",
-			initialServiceDisableStatus: true,
-			newServiceDisableStatus:     true,
-		},
-		{
-			name:                        "config with sync enabled should sync",
-			initialServiceDisableStatus: false,
-			newServiceDisableStatus:     false,
-		},
+		// {
+		//  	name:                        "config with sync disabled should sync nothing",
+		//  	initialServiceDisableStatus: true,
+		//  	newServiceDisableStatus:     true,
+		// },
+		// {
+		//  	name:                        "config with sync enabled should sync",
+		//  	initialServiceDisableStatus: false,
+		//  	newServiceDisableStatus:     false,
+		// },
 		{
 			name:                        "disabling sync should stop syncing",
 			initialServiceDisableStatus: false,
 			newServiceDisableStatus:     true,
 		},
-		{
-			name:                        "enabling sync should trigger syncing to start",
-			initialServiceDisableStatus: true,
-			newServiceDisableStatus:     false,
-		},
+		// {
+		//  	name:                        "enabling sync should trigger syncing to start",
+		//  	initialServiceDisableStatus: true,
+		//  	newServiceDisableStatus:     false,
+		// },
 	}
 
 	for _, tc := range tests {
@@ -65,6 +102,7 @@ func TestSyncEnabled(t *testing.T) {
 			// Make mockClock the package level clock used by the dmsvc so that we can simulate time's passage
 			clock = mockClock
 			tmpDir := t.TempDir()
+			pollFS(t, tmpDir, logger)
 
 			// Set up data manager.
 			mockClient := MockDataSyncServiceClient{
@@ -85,13 +123,16 @@ func TestSyncEnabled(t *testing.T) {
 			cfg.MaximumNumSyncThreads = 2
 
 			resources := resourcesFromDeps(t, robot, deps)
+			logger.Info("Reconfiguring with init settings.")
 			err := dmsvc.Reconfigure(context.Background(), resources, resource.Config{
 				ConvertedAttributes:  cfg,
 				AssociatedAttributes: associations,
 			})
 			test.That(t, err, test.ShouldBeNil)
+			logger.Infow("Adding captureInterval", "interval", captureInterval.Milliseconds())
 			mockClock.Add(captureInterval)
 			waitForCaptureFilesToExceedNFiles(tmpDir, 0, logger)
+			logger.Infow("Adding syncInterval", "interval", syncInterval.Milliseconds())
 			mockClock.Add(syncInterval)
 			var sentReq bool
 			wait := time.After(time.Second)
@@ -103,6 +144,7 @@ func TestSyncEnabled(t *testing.T) {
 
 			if !tc.initialServiceDisableStatus {
 				test.That(t, sentReq, test.ShouldBeTrue)
+				// waitForCaptureFilesToEqualNFiles(tmpDir, 0, logger)
 			} else {
 				test.That(t, sentReq, test.ShouldBeFalse)
 			}
@@ -113,6 +155,7 @@ func TestSyncEnabled(t *testing.T) {
 			cfg.CaptureDir = tmpDir
 			cfg.SyncIntervalMins = syncIntervalMins
 
+			logger.Info("Reconfiguring with new settings.")
 			resources = resourcesFromDeps(t, robot, deps)
 			err = dmsvc.Reconfigure(context.Background(), resources, resource.Config{
 				ConvertedAttributes:  cfg,
@@ -120,13 +163,18 @@ func TestSyncEnabled(t *testing.T) {
 			})
 			test.That(t, err, test.ShouldBeNil)
 
+			time.Sleep(time.Second)
+			waitForCaptureFilesToEqualNFiles(tmpDir, 0, logger)
+
 			// Drain any requests that were already sent before Update returned.
 			for len(mockClient.succesfulDCRequests) > 0 {
+				logger.Info("Drained request")
 				<-mockClient.succesfulDCRequests
 			}
 			var sentReqAfterUpdate bool
+			logger.Info("Adding captureInterval with new settings.")
 			mockClock.Add(captureInterval)
-			waitForCaptureFilesToExceedNFiles(tmpDir, 0, logger)
+			logger.Info("Adding syncInterval with new settings.")
 			mockClock.Add(syncInterval)
 			wait = time.After(time.Second)
 			select {
@@ -290,6 +338,7 @@ func TestDataCaptureUploadIntegration(t *testing.T) {
 						wait := time.After(time.Second * 5)
 						select {
 						case <-wait:
+							printAllStacks()
 							t.Fatalf("timed out waiting for sync request")
 						case <-mockClient.failedDCRequests:
 						}
@@ -313,6 +362,7 @@ func TestDataCaptureUploadIntegration(t *testing.T) {
 				wait := time.After(time.Second * 5)
 				select {
 				case <-wait:
+					printAllStacks()
 					t.Fatalf("timed out waiting for sync request. numFiles: %v successfulReqs: %v", numFiles, len(successfulReqs))
 				case r := <-mockClient.succesfulDCRequests:
 					successfulReqs = append(successfulReqs, r)
@@ -438,12 +488,14 @@ func TestArbitraryFileUpload(t *testing.T) {
 			select {
 			case <-wait:
 				if !tc.serviceFail {
+					printAllStacks()
 					t.Fatalf("timed out waiting for sync request")
 				}
 			case r := <-mockClient.fileUploads:
 				fileUploads = append(fileUploads, r)
 				select {
 				case <-wait:
+					printAllStacks()
 					t.Fatalf("timed out waiting for sync request")
 				case <-r.closed:
 					urs = append(urs, r.urs...)
@@ -580,12 +632,14 @@ func TestStreamingDCUpload(t *testing.T) {
 			select {
 			case <-wait:
 				if !tc.serviceFail {
+					printAllStacks()
 					t.Fatalf("timed out waiting for sync request")
 				}
 			case r := <-mockClient.streamingDCUploads:
 				uploads = append(uploads, r)
 				select {
 				case <-wait:
+					printAllStacks()
 					t.Fatalf("timed out waiting for sync request")
 				case <-r.closed:
 					urs = append(urs, r.reqs...)

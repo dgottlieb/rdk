@@ -98,7 +98,6 @@ func (cm *CaptureManager) Reconfigure(ctx context.Context, deps resource.Depende
 	// Service is disabled, so close all collectors and clear the map so we can instantiate new ones if we enable this service.
 	if cm.captureDisabled {
 		cm.CloseCollectors()
-		cm.collectors = make(map[resourceMethodMetadata]*collectorAndConfig)
 	}
 
 	if cm.capturePolling == nil {

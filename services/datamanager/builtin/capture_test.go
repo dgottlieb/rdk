@@ -362,7 +362,7 @@ func waitForCaptureFilesToExceedNFiles(captureDir string, n int, logger logging.
 
 			// We have N+1 files. No need to count any more.
 			if nonEmptyFiles > n {
-				logger.Infow("waitForCaptureFilesToEqualNFiles success", "numFiles", len(files), "expectedFiles", n, "dir", captureDir)
+				logger.Infow("waitForCaptureFilesToExceedNFiles success", "numFiles", len(files), "numToExceed", n, "dir", captureDir)
 				for idx, file := range files {
 					logger.Infow("File information", "idx", idx, "dir", captureDir, "name", file.Name(), "size", file.Size())
 				}
@@ -374,7 +374,7 @@ func waitForCaptureFilesToExceedNFiles(captureDir string, n int, logger logging.
 		time.Sleep(10 * time.Millisecond)
 		if time.Since(start) > 10*time.Second {
 			diagnostics.Do(func() {
-				logger.Infow("waitForCaptureFilesToEqualNFiles diagnostics after 10 seconds of waiting", "numFiles", len(files), "expectedFiles", n)
+				logger.Infow("waitForCaptureFilesToExceedNFiles diagnostics after 10 seconds of waiting", "numFiles", len(files), "numToExceed", n)
 				for idx, file := range files {
 					logger.Infow("File information", "idx", idx, "dir", captureDir, "name", file.Name(), "size", file.Size())
 				}

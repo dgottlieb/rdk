@@ -254,7 +254,7 @@ func (sm *SyncManager) SyncIntervalWorker() {
 		case <-sm.isAliveCtx.Done():
 			return
 		case tm := <-tickerCh:
-			sm.logger.Debugw("Datasync interval hit", "tickerTime", tm, "syncEnabled", !syncDisabled)
+			sm.logger.Debugw("Datasync interval hit", "tickerTime", tm.UnixMilli(), "syncEnabled", !syncDisabled)
 			if syncDisabled {
 				continue
 			}
