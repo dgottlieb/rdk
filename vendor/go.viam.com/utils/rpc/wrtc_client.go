@@ -368,12 +368,12 @@ func dialWebRTC(
 
 	doCall := func() error {
 		select {
-		case <-exchangeCtx.Done():
-			return multierr.Combine(exchangeCtx.Err(), clientCh.Close())
 		case <-clientCh.Ready():
+			fmt.Println("Client channel ready")
+			successful = true
 			return nil
-		case err := <-errCh:
-			return multierr.Combine(err, clientCh.Close())
+		case <-time.After(5 * time.Second):
+			return fmt.Errorf("Timeout waiting for client datachannel to be ready.")
 		}
 	}
 
@@ -390,7 +390,7 @@ func dialWebRTC(
 		return nil, multierr.Combine(callErr, err)
 	}
 	if err := sendDone(); err != nil {
-		return nil, err
+		return nil, nil
 	}
 	successful = true
 	return clientCh, nil

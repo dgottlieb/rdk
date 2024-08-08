@@ -299,7 +299,7 @@ func (ans *webrtcSignalingAnswerer) answer(client webrtcpb.SignalingService_Answ
 	}
 	var successful bool
 	defer func() {
-		if !(successful && err == nil) {
+		if !successful {
 			err = multierr.Combine(err, pc.Close())
 		} else {
 			stats.mu.Lock()
@@ -468,13 +468,13 @@ func (ans *webrtcSignalingAnswerer) answer(client webrtcpb.SignalingService_Answ
 					if errors.Is(err, context.Canceled) {
 						return nil
 					}
-					return err
+					return nil
 				}
 
 				ansResp, err := client.Recv()
 				if err != nil {
 					if !errors.Is(err, io.EOF) {
-						return err
+						return nil
 					}
 					return nil
 				}
@@ -491,15 +491,15 @@ func (ans *webrtcSignalingAnswerer) answer(client webrtcpb.SignalingService_Answ
 					stats.remoteICECandidates = append(stats.remoteICECandidates, remoteCand)
 					stats.mu.Unlock()
 					if err := pc.AddICECandidate(cand); err != nil {
-						return err
+						return nil
 					}
 				case *webrtcpb.AnswerRequest_Done:
 					return nil
 				case *webrtcpb.AnswerRequest_Error:
-					respStatus := status.FromProto(s.Error.Status)
-					return fmt.Errorf("error from requester: %w", respStatus.Err())
+					// respStatus := status.FromProto(s.Error.Status)
+					return nil // fmt.Errorf("error from requester: %w", respStatus.Err())
 				default:
-					return errors.Errorf("unexpected stage %T", s)
+					return nil // errors.Errorf("unexpected stage %T", s)
 				}
 			}
 		}
@@ -518,17 +518,19 @@ func (ans *webrtcSignalingAnswerer) answer(client webrtcpb.SignalingService_Answ
 
 	doAnswer := func() error {
 		select {
-		case <-exchangeCtx.Done():
-			return multierr.Combine(exchangeCtx.Err(), serverChannel.Close())
+		// case <-exchangeCtx.Done():
+		//  	return multierr.Combine(exchangeCtx.Err(), serverChannel.Close())
 		case <-serverChannel.Ready():
+			successful = true
 			return nil
-		case <-errCh:
-			return multierr.Combine(err, serverChannel.Close())
+		// case <-errCh:
+		//  	return multierr.Combine(err, serverChannel.Close())
+		case <-time.After(5 * time.Second):
+			return fmt.Errorf("Server timed out waiting for datachannel.OnReady")
 		}
 	}
 
 	if answerErr := doAnswer(); answerErr != nil {
-		var err error
 		sendDoneErrorOnce.Do(func() {
 			err = client.Send(&webrtcpb.AnswerResponse{
 				Uuid: uuid,
@@ -539,7 +541,7 @@ func (ans *webrtcSignalingAnswerer) answer(client webrtcpb.SignalingService_Answ
 				},
 			})
 		})
-		return err
+		// return nil
 	}
 	if err := sendDone(); err != nil {
 		// Errors from sendDone (such as EOF) are sometimes caused by the signaling

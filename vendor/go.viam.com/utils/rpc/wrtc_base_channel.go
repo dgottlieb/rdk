@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"runtime/debug"
 	"strings"
 	"sync"
 
@@ -75,6 +76,12 @@ func newBaseChannel(
 	}
 	connStateChanged := func(connectionState webrtc.ICEConnectionState) {
 		ch.activeBackgroundWorkers.Add(1)
+		_, hasCandPair := webrtcPeerConnCandPair(peerConn)
+		if hasCandPair {
+			logger.Info("DBG. Selected candidate pair.")
+			debug.PrintStack()
+		}
+
 		utils.PanicCapturingGo(func() {
 			defer ch.activeBackgroundWorkers.Done()
 
