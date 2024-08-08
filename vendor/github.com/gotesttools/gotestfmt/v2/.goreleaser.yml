@@ -1,0 +1,37 @@
+project_name: gotestfmt
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    ignore:
+      - goos: windows
+        goarch: arm64
+    main: ./cmd/gotestfmt
+archives:
+  - format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE.md
+      - README.md
+dockers:
+  - dockerfile: Dockerfile.goreleaser
+    image_templates:
+      - ghcr.io/gotesttools/gotestfmt:{{ .Tag }}
+      - ghcr.io/gotesttools/gotestfmt:v{{ .Major }}
+      - ghcr.io/gotesttools/gotestfmt:latest
+gomod:
+  proxy: true
+  env:
+    - GOPROXY=https://proxy.golang.org,direct
+    - GOSUMDB=sum.golang.org
+    - GOPRIVATE=example.com/blah
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'

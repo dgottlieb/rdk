@@ -1,0 +1,43 @@
+{{- /*gotype: github.com/gotesttools/gotestfmt/v2/parser.Package*/ -}}
+{{- /*
+This template contains the format for an individual package. GitHub actions does not currently support nested groups so
+we are creating a stylized header for each package.
+*/ -}}
+{{- $settings := .Settings -}}
+{{- if and (or (not $settings.HideSuccessfulPackages) (ne .Result "PASS")) (or (not $settings.HideEmptyPackages) (ne .Result "SKIP") (ne (len .TestCases) 0)) -}}
+    ##teamcity[blockOpened name='📦 {{ .Name }}{{- with .Coverage }} ({{ . }}% coverage){{- end -}}']
+    {{- with .Reason -}}
+        {{- "  " -}}🛑 {{ . -}}{{- "\n" -}}
+    {{- end -}}
+    {{- with .Output -}}
+        {{- . -}}{{- "\n" -}}
+    {{- end -}}
+    {{- with .TestCases -}}
+        {{- range . -}}
+            {{- if or (not $settings.HideSuccessfulTests) (ne .Result "PASS") -}}
+                {{- $title := "" -}}
+                {{- if $settings.ShowTestStatus -}}
+                    {{- $title = print .Name " (" .Result "; " .Duration ")" -}}
+                {{- else -}}
+                    {{- $title = print .Name " (" .Duration ")" -}}
+                {{- end -}}
+                {{- if eq .Result "PASS" -}}
+                    {{- $title = print "✅ " $title -}}
+                {{- else if eq .Result "SKIP" -}}
+                    {{- $title = print "🚧 " $title -}}
+                {{- else -}}
+                    {{- $title = print "❌ " $title -}}
+                {{- end -}}
+                {{- "\n" -}}
+
+                ##teamcity[blockOpened name='{{- $title -}}']{{- "\n" -}}
+                {{- with .Output -}}
+                    {{- formatTestOutput . $settings -}}
+                    {{- "\n" -}}
+                {{- end -}}
+                ##teamcity[blockClosed name='{{- $title -}}']{{- "\n" -}}
+            {{- end -}}
+        {{- end -}}
+    {{- end -}}
+    ##teamcity[blockClosed name='📦 {{ .Name }}{{- with .Coverage }} ({{ . }}% coverage){{- end -}}']{{- "\n" -}}
+{{- end -}}
