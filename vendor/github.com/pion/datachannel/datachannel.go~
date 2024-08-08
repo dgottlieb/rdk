@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -63,7 +62,6 @@ type DataChannel struct {
 
 // Config is used to configure the data channel.
 type Config struct {
-	IsViamServer         bool
 	ChannelType          ChannelType
 	Negotiated           bool
 	Priority             uint16
@@ -71,7 +69,6 @@ type Config struct {
 	Label                string
 	Protocol             string
 	LoggerFactory        logging.LoggerFactory
-	IsServer             bool
 }
 
 func newDataChannel(stream *sctp.Stream, config *Config) (*DataChannel, error) {
@@ -118,12 +115,6 @@ func Client(stream *sctp.Stream, config *Config) (*DataChannel, error) {
 			return nil, fmt.Errorf("failed to send ChannelOpen %w", err)
 		}
 	}
-	fmt.Println("DBG. Server?", config.IsServer)
-	if config.IsServer {
-		time.Sleep(time.Second)
-	}
-	fmt.Println("DBG. Server done sleeping")
-	// debug.PrintStack()
 	return newDataChannel(stream, config)
 }
 
@@ -152,7 +143,6 @@ func Accept(a *sctp.Association, config *Config, existingChannels ...*DataChanne
 
 // Server accepts a data channel over an SCTP stream
 func Server(stream *sctp.Stream, config *Config) (*DataChannel, error) {
-	debug.PrintStack()
 	buffer := make([]byte, receiveMTU)
 	n, ppi, err := stream.ReadSCTP(buffer)
 	if err != nil {

@@ -56,7 +56,6 @@ var (
 
 // Stream represents an SCTP stream
 type Stream struct {
-	IsServer            bool
 	association         *Association
 	lock                sync.RWMutex
 	streamIdentifier    uint16
@@ -199,9 +198,6 @@ func (s *Stream) handleData(pd *chunkPayloadData) {
 	defer s.lock.Unlock()
 
 	var readable bool
-	if s.IsServer {
-		fmt.Printf("Handling data. StreamId: %v StreamSeq: %v Size? %v\n", pd.streamIdentifier, pd.streamSequenceNumber, len(pd.chunkHeader.raw))
-	}
 	if s.reassemblyQueue.push(pd) {
 		readable = s.reassemblyQueue.isReadable()
 		s.log.Debugf("[%s] reassemblyQueue readable=%v", s.name, readable)

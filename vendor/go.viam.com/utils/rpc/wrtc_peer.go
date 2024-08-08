@@ -156,6 +156,7 @@ func newPeerConnectionForServer(
 		return nil, nil, err
 	}
 
+	config.IsServer = true
 	peerConn, err := webAPI.NewPeerConnection(config)
 	if err != nil {
 		return nil, nil, err
@@ -185,6 +186,7 @@ func newPeerConnectionForServer(
 		ID:         &dataChannelID,
 		Negotiated: &negotiated,
 		Ordered:    &ordered,
+		IsServer:   true,
 	})
 	if err != nil {
 		return nil, nil, err

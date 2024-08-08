@@ -33,9 +33,8 @@ import (
 // peer-to-peer communications with another PeerConnection instance in a
 // browser, or to another endpoint implementing the required protocols.
 type PeerConnection struct {
-	IsServer bool
-	statsID  string
-	mu       sync.RWMutex
+	statsID string
+	mu      sync.RWMutex
 
 	sdpOrigin sdp.Origin
 
@@ -119,8 +118,7 @@ func (api *API) NewPeerConnection(configuration Configuration) (*PeerConnection,
 	// allow better readability to understand what is happening.
 
 	pc := &PeerConnection{
-		IsServer: configuration.IsServer,
-		statsID:  fmt.Sprintf("PeerConnection-%d", time.Now().UnixNano()),
+		statsID: fmt.Sprintf("PeerConnection-%d", time.Now().UnixNano()),
 		configuration: Configuration{
 			ICEServers:           []ICEServer{},
 			ICETransportPolicy:   ICETransportPolicyAll,
@@ -1936,9 +1934,8 @@ func (pc *PeerConnection) CreateDataChannel(label string, options *DataChannelIn
 	}
 
 	params := &DataChannelParameters{
-		Label:    label,
-		Ordered:  true,
-		IsServer: pc.IsServer,
+		Label:   label,
+		Ordered: true,
 	}
 
 	// https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #19)

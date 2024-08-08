@@ -12,5 +12,4 @@ type DataChannelParameters struct {
 	MaxPacketLifeTime *uint16 `json:"maxPacketLifeTime"`
 	MaxRetransmits    *uint16 `json:"maxRetransmits"`
 	Negotiated        bool    `json:"negotiated"`
-	IsServer          bool
 }

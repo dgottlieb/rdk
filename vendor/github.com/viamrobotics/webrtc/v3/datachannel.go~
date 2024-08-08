@@ -27,8 +27,7 @@ var errSCTPNotEstablished = errors.New("SCTP not established")
 // The DataChannel interface represents a network channel
 // which can be used for bidirectional peer-to-peer transfers of arbitrary data
 type DataChannel struct {
-	mu       sync.RWMutex
-	IsServer bool
+	mu sync.RWMutex
 
 	statsID                    string
 	label                      string
@@ -73,7 +72,6 @@ type DataChannel struct {
 // meant to be used together with the basic WebRTC API.
 func (api *API) NewDataChannel(transport *SCTPTransport, params *DataChannelParameters) (*DataChannel, error) {
 	d, err := api.newDataChannel(params, nil, api.settingEngine.LoggerFactory.NewLogger("ortc"))
-	d.IsServer = params.IsServer
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +104,6 @@ func (api *API) newDataChannel(params *DataChannelParameters, sctpTransport *SCT
 		maxRetransmits:    params.MaxRetransmits,
 		api:               api,
 		log:               log,
-		IsServer:          params.IsServer,
 	}
 
 	d.setReadyState(DataChannelStateConnecting)
@@ -161,10 +158,8 @@ func (d *DataChannel) open(sctpTransport *SCTPTransport) error {
 		Protocol:             d.protocol,
 		Negotiated:           d.negotiated,
 		LoggerFactory:        d.api.settingEngine.LoggerFactory,
-		IsServer:             d.IsServer,
 	}
 
-	fmt.Printf("DBG. DC.open. Ptr: %p Server? %v Role? %v\n", d, d.IsServer, d.sctpTransport.dtlsTransport.role())
 	if d.id == nil {
 		// avoid holding lock when generating ID, since id generation locks
 		d.mu.Unlock()

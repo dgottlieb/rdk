@@ -12,7 +12,6 @@ package webrtc
 // Configurations are treated as readonly. As long as they are unmodified,
 // they are safe for concurrent use.
 type Configuration struct {
-	IsServer bool
 	// ICEServers defines a slice describing servers available to be used by
 	// ICE, such as STUN and TURN servers.
 	ICEServers []ICEServer `json:"iceServers,omitempty"`

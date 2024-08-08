@@ -33,6 +33,4 @@ type DataChannelInit struct {
 
 	// ID overrides the default selection of ID for this channel.
 	ID *uint16
-
-	IsServer bool
 }
