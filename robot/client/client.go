@@ -650,6 +650,7 @@ func (rc *RobotClient) updateResources(ctx context.Context) error {
 	if err != nil && status.Code(err) != codes.Unimplemented {
 		return err
 	}
+	rc.logger.Info("DBG. Resources found: ", names)
 
 	rc.resourceNames = make([]resource.Name, 0, len(names))
 	rc.resourceNames = append(rc.resourceNames, names...)

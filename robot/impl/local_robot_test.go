@@ -19,6 +19,7 @@ import (
 	"github.com/pkg/errors"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.uber.org/zap"
+
 	// registers all components.
 	commonpb "go.viam.com/api/common/v1"
 	armpb "go.viam.com/api/component/arm/v1"
@@ -1904,6 +1905,19 @@ func TestConfigMethod(t *testing.T) {
 	expectedCfg.Modules = nil
 
 	test.That(t, actualCfg, test.ShouldResemble, &expectedCfg)
+}
+
+func TestConnectDan(t *testing.T) {
+	logger := logging.NewTestLogger(t)
+	options, _, addr := robottestutils.CreateBaseOptionsAndListener(t)
+	ctx := context.Background()
+	robot := setupLocalRobot(t, ctx, &config.Config{}, logger.Sublogger("rdk"))
+	err := robot.StartWeb(ctx, options)
+	test.That(t, err, test.ShouldBeNil)
+
+	robotClient, err := client.New(ctx, addr, logger.Sublogger("client"))
+	test.That(t, err, test.ShouldBeNil)
+	defer robotClient.Close(ctx)
 }
 
 func TestReconnectRemote(t *testing.T) {
