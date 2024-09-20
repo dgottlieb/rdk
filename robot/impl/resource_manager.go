@@ -19,6 +19,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"go.viam.com/rdk/config"
+	"go.viam.com/rdk/ftdc"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/module/modmanager"
 	modmanageroptions "go.viam.com/rdk/module/modmanager/options"
@@ -63,6 +64,7 @@ type resourceManagerOptions struct {
 	allowInsecureCreds bool
 	untrustedEnv       bool
 	tlsConfig          *tls.Config
+	ftdc               *ftdc.FTDC
 }
 
 // newResourceManager returns a properly initialized set of parts.
@@ -73,7 +75,7 @@ func newResourceManager(
 ) *resourceManager {
 	resLogger := logger.Sublogger("resource_manager")
 	return &resourceManager{
-		resources:      resource.NewGraph(),
+		resources:      resource.NewGraphWithFTDC(opts.ftdc),
 		processManager: newProcessManager(opts, logger),
 		processConfigs: make(map[string]pexec.ProcessConfig),
 		opts:           opts,

@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	model         = resource.DefaultModelFamily.WithModel("fake")
+	Model         = resource.DefaultModelFamily.WithModel("fake")
 	fakeBoardConf = resource.Config{
 		Name: "fakeboard",
 		API:  board.API,
@@ -70,7 +70,7 @@ func (cfg *Config) Validate(path string) ([]string, error) {
 }
 
 func init() {
-	resource.RegisterComponent(motor.API, model, resource.Registration[motor.Motor, *Config]{
+	resource.RegisterComponent(motor.API, Model, resource.Registration[motor.Motor, *Config]{
 		Constructor: NewMotor,
 	})
 }
@@ -106,6 +106,21 @@ func NewMotor(ctx context.Context, deps resource.Dependencies, conf resource.Con
 		return nil, err
 	}
 	return m, nil
+}
+
+func (m *Motor) Stats() any {
+	m.mu.Lock()
+	powerPct := m.powerPct
+	var position float64
+	if m.Encoder != nil {
+		position, _, _ = m.Encoder.Position(context.Background(), encoder.PositionTypeTicks, nil)
+	}
+	m.mu.Unlock()
+
+	return struct {
+		PowerPct float64
+		Position float64
+	}{powerPct, position}
 }
 
 // Reconfigure atomically reconfigures this motor in place based on the new config.

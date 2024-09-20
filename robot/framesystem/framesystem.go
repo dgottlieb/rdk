@@ -199,6 +199,15 @@ func (svc *frameSystemService) Reconfigure(ctx context.Context, deps resource.De
 	return nil
 }
 
+func (svc *frameSystemService) Stats() any {
+	svc.partsMu.RLock()
+	numParts := len(svc.parts)
+	svc.partsMu.RUnlock()
+	return struct {
+		NumParts int
+	}{numParts}
+}
+
 // TransformPose will transform the pose of the requested poseInFrame to the desired frame in the robot's frame system.
 func (svc *frameSystemService) TransformPose(
 	ctx context.Context,

@@ -341,6 +341,17 @@ func (svc *webService) StartModule(ctx context.Context) error {
 	return nil
 }
 
+func (svc *webService) Stats() any {
+	svc.mu.Lock()
+	numVideoSources := len(svc.videoSources)
+	numAudioSources := len(svc.audioSources)
+	svc.mu.Unlock()
+	return struct {
+		NumVideoSources int
+		NumAudioSources int
+	}{numVideoSources, numAudioSources}
+}
+
 func (svc *webService) refreshResources() error {
 	resources := make(map[resource.Name]resource.Resource)
 	for _, name := range svc.r.ResourceNames() {

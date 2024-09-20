@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.viam.com/rdk/ftdc"
 	"go.viam.com/rdk/logging"
 )
 
@@ -221,6 +222,30 @@ func (w *GraphNode) UnsetResource() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.current = nil
+}
+
+// Stats is used to report on the graph node state of a resource.
+func (w *GraphNode) Stats() any {
+	ret := map[string]any{}
+
+	res, err := w.Resource()
+	switch err {
+	case nil:
+		ret["err"] = 0
+	case errNotInitalized:
+		ret["err"] = 1
+	case errPendingRemoval:
+		ret["err"] = 2
+	default:
+		// `w.lastErr != nil`
+		ret["err"] = 3
+	}
+
+	if statser, isOk := res.(ftdc.Statser); isOk && err == nil {
+		ret["stats"] = statser.Stats()
+	}
+
+	return ret
 }
 
 // SwapResource emplaces the new resource. It may be the same as before

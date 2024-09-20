@@ -19,6 +19,15 @@ func setupLocalRobot(
 ) robot.LocalRobot {
 	t.Helper()
 
+	// Call `config.Ensure` to fill in "implicit" dependencies returned by resource config
+	// validation. We assume users of this function are intending for topological sort to be applied
+	// to all dependencies and not just explicit `depends_on`.
+	//
+	// Additionally, we ignore any error. These errors are expected to be of the "missing field"
+	// variety when a required attributed is missing. Which is more likely to be an intentional
+	// omission from a test author.
+	_ = cfg.Ensure(false, logger)
+
 	// use a temporary home directory so that it doesn't collide with
 	// the user's/other tests' viam home directory
 	r, err := New(ctx, cfg, logger, WithViamHomeDir(t.TempDir()))

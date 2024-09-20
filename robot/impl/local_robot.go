@@ -24,6 +24,7 @@ import (
 
 	"go.viam.com/rdk/cloud"
 	"go.viam.com/rdk/config"
+	"go.viam.com/rdk/ftdc"
 	icloud "go.viam.com/rdk/internal/cloud"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/operation"
@@ -85,6 +86,7 @@ type localRobot struct {
 	// map keyed by Module.Name. This is necessary to get the package manager to use a new folder
 	// when a local tarball is updated.
 	localModuleVersions map[string]semver.Version
+	ftdc                *ftdc.FTDC
 }
 
 // ExportResourcesAsDot exports the resource graph as a DOT representation for
@@ -402,6 +404,8 @@ func newWithResources(
 		opt.apply(&rOpts)
 	}
 
+	ftdcJob := ftdc.New(logger.Sublogger("ftdc"))
+	ftdcJob.Start()
 	closeCtx, cancel := context.WithCancel(ctx)
 	r := &localRobot{
 		manager: newResourceManager(
@@ -411,6 +415,7 @@ func newWithResources(
 				allowInsecureCreds: cfg.AllowInsecureCreds,
 				untrustedEnv:       cfg.UntrustedEnv,
 				tlsConfig:          cfg.Network.TLSConfig,
+				ftdc:               ftdcJob,
 			},
 			logger,
 		),
@@ -426,6 +431,7 @@ func newWithResources(
 		cloudConnSvc:               icloud.NewCloudConnectionService(cfg.Cloud, logger),
 		shutdownCallback:           rOpts.shutdownCallback,
 		localModuleVersions:        make(map[string]semver.Version),
+		ftdc:                       ftdcJob,
 	}
 	r.mostRecentCfg.Store(config.Config{})
 	var heartbeatWindow time.Duration

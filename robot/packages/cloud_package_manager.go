@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
@@ -48,6 +49,10 @@ type cloudManager struct {
 
 	managedPackages map[PackageName]*config.PackageConfig
 	mu              sync.RWMutex
+
+	bytesDownloaded       atomic.Int64
+	packagesDownloaded    atomic.Int32
+	packageDownloadErrors atomic.Int32
 
 	logger logging.Logger
 }
@@ -191,8 +196,10 @@ func (m *cloudManager) Sync(ctx context.Context, packages []config.PackageConfig
 			m.logger.Errorf("Failed downloading package %s:%s from %s, %s", p.Package, p.Version, sanitizeURLForLogs(resp.Package.Url), err)
 			outErr = multierr.Append(outErr, errors.Wrapf(err, "failed downloading package %s:%s from %s",
 				p.Package, p.Version, sanitizeURLForLogs(resp.Package.Url)))
+			m.packageDownloadErrors.Add(1)
 			continue
 		}
+		m.packagesDownloaded.Add(1)
 
 		if p.Type == config.PackageTypeMlModel {
 			outErr = multierr.Append(outErr, m.mLModelSymlinkCreation(p))
@@ -318,6 +325,15 @@ func sanitizeURLForLogs(u string) string {
 	return parsed.String()
 }
 
+type counterWriter struct {
+	counter *atomic.Int64
+}
+
+func (cw counterWriter) Write(byts []byte) (int, error) {
+	cw.counter.Add(int64(len(byts)))
+	return len(byts), nil
+}
+
 func (m *cloudManager) downloadFileFromGCSURL(
 	ctx context.Context,
 	url string,
@@ -354,7 +370,7 @@ func (m *cloudManager) downloadFileFromGCSURL(
 	defer utils.UncheckedErrorFunc(out.Close)
 
 	hash := crc32Hash()
-	w := io.MultiWriter(out, hash)
+	w := io.MultiWriter(out, hash, counterWriter{&m.bytesDownloaded})
 
 	_, err = io.CopyN(w, resp.Body, maxPackageSize)
 	if err != nil && !errors.Is(err, io.EOF) {
@@ -450,4 +466,12 @@ func linkFile(from, to string) error {
 // SyncOne is a no-op for cloudManager.
 func (m *cloudManager) SyncOne(ctx context.Context, mod config.Module) error {
 	return nil
+}
+
+func (m *cloudManager) Stats() any {
+	return struct {
+		BytesDownloaded       int64
+		PackagesDownloaded    int32
+		PackageDownloadErrors int32
+	}{m.bytesDownloaded.Load(), m.packagesDownloaded.Load(), m.packageDownloadErrors.Load()}
 }

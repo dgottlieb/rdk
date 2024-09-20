@@ -115,6 +115,28 @@ type wheeledBase struct {
 	name string
 }
 
+func (wb *wheeledBase) Stats() any {
+	wb.mu.Lock()
+	leftMoving := false
+	for idx, _ := range wb.left {
+		if !leftMoving {
+			leftMoving, _ = wb.left[idx].IsMoving(context.Background())
+		}
+	}
+	rightMoving := false
+	for idx, _ := range wb.right {
+		if !rightMoving {
+			rightMoving, _ = wb.right[idx].IsMoving(context.Background())
+		}
+	}
+	wb.mu.Unlock()
+
+	return struct {
+		LeftMoving  bool
+		RightMoving bool
+	}{leftMoving, rightMoving}
+}
+
 // Reconfigure reconfigures the base atomically and in place.
 func (wb *wheeledBase) Reconfigure(ctx context.Context, deps resource.Dependencies, conf resource.Config) error {
 	wb.mu.Lock()
