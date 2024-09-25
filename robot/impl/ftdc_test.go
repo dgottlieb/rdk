@@ -99,6 +99,8 @@ func TestFTDC(t *testing.T) {
 	}
 	config.UpdateLoggerRegistryFromConfig(registry, cfg, logger)
 
+	// `setupLocalRobot` sets up a test handler to close the robot on test exit. Avoid
+	// double-closing.
 	robot := setupLocalRobot(t, ctx, cfg, logger)
 	done := make(chan struct{})
 	go func() {
@@ -110,5 +112,4 @@ func TestFTDC(t *testing.T) {
 	}()
 	time.Sleep(5 * time.Second)
 	<-done
-	defer robot.Close(ctx)
 }

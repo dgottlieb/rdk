@@ -176,6 +176,9 @@ func (r *localRobot) Close(ctx context.Context) error {
 	if r.webSvc != nil {
 		err = multierr.Combine(err, r.webSvc.Close(ctx))
 	}
+
+	// We stop FTDC last to capture metrics that might be useful for slow/hung shutdown.
+	r.ftdc.StopAndJoin()
 	return err
 }
 
