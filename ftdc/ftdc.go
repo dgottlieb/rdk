@@ -3,6 +3,7 @@ package ftdc
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -20,20 +21,38 @@ type namedStatser struct {
 	statser Statser
 }
 
-type Datum map[string]any
+type Datum struct {
+	time         int64
+	data         map[string]any
+	generationId int
+}
 
 type FTDC struct {
-	mu          sync.Mutex
-	things      []namedStatser
-	statsWorker *utils.StoppableWorkers
-	statsCh     chan Datum
+	json bool
+
+	mu                 sync.Mutex
+	things             []namedStatser
+	thingsGenerationId int
+	statsWorker        *utils.StoppableWorkers
+	statsCh            chan Datum
 
 	outputFile       *os.File
 	outputWorkerDone chan struct{}
 	logger           logging.Logger
 }
 
+type Schema struct{}
+
 func New(logger logging.Logger) *FTDC {
+	return &FTDC{
+		json:             true,
+		statsCh:          make(chan Datum, 100),
+		outputWorkerDone: make(chan struct{}),
+		logger:           logger,
+	}
+}
+
+func NewOptimized(logger logging.Logger) *FTDC {
 	return &FTDC{
 		statsCh:          make(chan Datum, 100),
 		outputWorkerDone: make(chan struct{}),
@@ -44,15 +63,35 @@ func New(logger logging.Logger) *FTDC {
 func (ftdc *FTDC) Add(name string, statser Statser) {
 	ftdc.mu.Lock()
 	defer ftdc.mu.Unlock()
-	ftdc.logger.Debug("Added:", name)
+
+	for _, thing := range ftdc.things {
+		if thing.name == name {
+			ftdc.logger.Warnw("Trying to add conflicting ftdc section", "name", name)
+			// FTDC output is broken down into separate "sections". The `name` is used to label each
+			// section. We return here to predictably include one of the `Add`ed statsers.
+			return
+		}
+	}
+
+	ftdc.logger.Debugw("Added statser", "name", name, "type", fmt.Sprintf("%T", statser))
 	ftdc.things = append(ftdc.things, namedStatser{
 		name:    name,
 		statser: statser,
 	})
+	ftdc.thingsGenerationId++
 }
 
 func (ftdc *FTDC) Remove(name string) {
-	ftdc.logger.Debug("Removed:", name)
+	ftdc.mu.Lock()
+	defer ftdc.mu.Unlock()
+	for idx, thing := range ftdc.things {
+		if thing.name == name {
+			ftdc.logger.Debugw("Removed statser", "name", name, "type", fmt.Sprintf("%T", thing.statser))
+			ftdc.things = append(ftdc.things[0:idx], ftdc.things[idx+1:len(ftdc.things)]...)
+		}
+	}
+
+	ftdc.thingsGenerationId++
 }
 
 func (ftdc *FTDC) Start() {
@@ -65,30 +104,40 @@ func (ftdc *FTDC) Start() {
 			close(ftdc.outputWorkerDone)
 		}()
 
+		lastGenerationId := -1
 		for datum := range ftdc.statsCh {
-			ftdc.output(datum)
+			var rewriteHeaders bool
+			// If the generation id changed, our datum has a different schema. So we must recompute
+			// headers.
+			if lastGenerationId != datum.generationId {
+				rewriteHeaders = true
+			}
+			_ = rewriteHeaders
+
+			ftdc.output(datum, nil)
 		}
 	}()
 }
 
 func (ftdc *FTDC) doWork(ctx context.Context) {
-	var datum Datum = map[string]any{
-		"_timeStart": time.Now().Unix(),
+	datum := Datum{
+		time: time.Now().Unix(),
+		data: map[string]any{},
 	}
 
 	ftdc.mu.Lock()
+	datum.generationId = ftdc.thingsGenerationId
 	for idx := range ftdc.things {
 		thing := &ftdc.things[idx]
-		datum[thing.name] = thing.statser.Stats()
+		datum.data[thing.name] = thing.statser.Stats()
 	}
 	ftdc.mu.Unlock()
 
-	datum["_timeEnd"] = time.Now().Unix()
 	ftdc.statsCh <- datum
-	ftdc.logger.Debugw("Metrics collected.", "metrics", datum)
+	ftdc.logger.Debugw("Metrics collected", "datum", datum)
 }
 
-func (ftdc *FTDC) output(datum Datum) {
+func (ftdc *FTDC) output(datum Datum, schema *Schema) {
 	var err error
 	if ftdc.outputFile == nil {
 		ftdc.outputFile, err = os.Create("./viam-server.ftdc")
