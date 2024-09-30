@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"time"
 
+	"github.com/golang/snappy"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/utils"
 )
@@ -100,13 +102,21 @@ func (ftdc *FTDC) Remove(name string) {
 func (ftdc *FTDC) Start() {
 	ftdc.statsWorker = utils.NewStoppableWorkerWithTicker(time.Second, ftdc.producerFn)
 	go func() {
-		outputFile, err := os.Create("./viam-server.ftdc")
+		outputFile, err := os.Create(fmt.Sprintf("./viam-server-%s.ftdc", ftdc.outputFormat))
 		if err != nil {
 			ftdc.logger.Warnw("FTDC failed to open file", "err", err)
 			return
 		}
+		var writer io.WriteCloser = outputFile
+		if ftdc.outputFormat == "json-snappy" {
+			writer = snappy.NewBufferedWriter(outputFile)
+		}
 		defer func() {
-			outputFile.Close()
+			writer.Close()
+			fmt.Println("Closing file:", outputFile.Name())
+			if ftdc.outputFormat != "json-snappy" {
+				outputFile.Close()
+			}
 			close(ftdc.outputWorkerDone)
 		}()
 
@@ -119,7 +129,7 @@ func (ftdc *FTDC) Start() {
 				rewriteHeaders = true
 			}
 
-			if err := ftdc.output(datum, rewriteHeaders, outputFile); err != nil {
+			if err := ftdc.output(datum, rewriteHeaders, writer); err != nil {
 				break
 			}
 		}
@@ -146,11 +156,12 @@ func (ftdc *FTDC) producerFn(ctx context.Context) {
 	case <-ftdc.outputWorkerDone:
 		break
 	}
+
 	// `Debugw` does not seem to serialize any of the `datum` value.
 	ftdc.logger.Debugf("Metrics collected. Datum: %+v", datum)
 }
 
-func (ftdc *FTDC) output(datum Datum, rewriteHeaders bool, outputFile *os.File) error {
+func (ftdc *FTDC) output(datum Datum, rewriteHeaders bool, writer io.Writer) error {
 	var err error
 	ftdc.logger.Debugf("Outputting metrics. Datum: %+v", datum)
 	datumBytes, err := json.Marshal(datum)
@@ -159,17 +170,15 @@ func (ftdc *FTDC) output(datum Datum, rewriteHeaders bool, outputFile *os.File) 
 		return err
 	}
 
-	_, err = outputFile.Write(datumBytes)
+	_, err = writer.Write(datumBytes)
 	if err != nil {
 		ftdc.logger.Warnw("Failed to write ftdc data to file", "err", err)
-		outputFile.Close()
 		return err
 	}
 
-	_, err = outputFile.Write([]byte("\n"))
+	_, err = writer.Write([]byte("\n"))
 	if err != nil {
 		ftdc.logger.Warnw("Failed to write ftdc data to file", "err", err)
-		outputFile.Close()
 		return err
 	}
 
