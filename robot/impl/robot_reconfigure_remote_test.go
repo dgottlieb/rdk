@@ -16,6 +16,7 @@ import (
 	"go.viam.com/rdk/config"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/resource"
+
 	// TODO(RSDK-7884): change everything that depends on this import to a mock.
 	"go.viam.com/rdk/services/motion"
 	// TODO(RSDK-7884): change all referenced resources to mocks.
@@ -59,13 +60,13 @@ func TestRemoteRobotsGold(t *testing.T) {
 	ctx := context.Background()
 
 	// set up and start remote1's web service
-	remote1 := setupLocalRobot(t, ctx, remoteConfig, logger.Sublogger("remote1"))
+	remote1 := SetupLocalRobot(t, ctx, remoteConfig, logger.Sublogger("remote1"))
 	options, _, addr1 := robottestutils.CreateBaseOptionsAndListener(t)
 	err := remote1.StartWeb(ctx, options)
 	test.That(t, err, test.ShouldBeNil)
 
 	// set up but do not start remote2's web service
-	remote2 := setupLocalRobot(t, ctx, remoteConfig, logger.Sublogger("remote2"))
+	remote2 := SetupLocalRobot(t, ctx, remoteConfig, logger.Sublogger("remote2"))
 	options, listener2, addr2 := robottestutils.CreateBaseOptionsAndListener(t)
 
 	localConfig := &config.Config{
@@ -101,7 +102,7 @@ func TestRemoteRobotsGold(t *testing.T) {
 			},
 		},
 	}
-	r := setupLocalRobot(t, ctx, localConfig, logger.Sublogger("main"))
+	r := SetupLocalRobot(t, ctx, localConfig, logger.Sublogger("main"))
 
 	// assert all of remote1's resources exist on main but none of remote2's
 	rdktestutils.VerifySameResourceNames(
@@ -152,7 +153,7 @@ func TestRemoteRobotsGold(t *testing.T) {
 		)
 	})
 
-	remote3 := setupLocalRobot(t, ctx, remoteConfig, logger.Sublogger("remote3"))
+	remote3 := SetupLocalRobot(t, ctx, remoteConfig, logger.Sublogger("remote3"))
 
 	// Note: There's a slight chance this test can fail if someone else
 	// claims the port we just released by closing the server.
@@ -184,7 +185,7 @@ func TestRemoteRobotsUpdate(t *testing.T) {
 		},
 	}
 	ctx := context.Background()
-	remote := setupLocalRobot(t, ctx, remoteConfig, logger.Sublogger("remote"))
+	remote := SetupLocalRobot(t, ctx, remoteConfig, logger.Sublogger("remote"))
 
 	options, _, addr1 := robottestutils.CreateBaseOptionsAndListener(t)
 	err := remote.StartWeb(ctx, options)
@@ -210,7 +211,7 @@ func TestRemoteRobotsUpdate(t *testing.T) {
 			},
 		},
 	}
-	r := setupLocalRobot(t, ctx, localConfig, logger.Sublogger("local"))
+	r := SetupLocalRobot(t, ctx, localConfig, logger.Sublogger("local"))
 
 	expectedSet := []resource.Name{
 		motion.Named(resource.DefaultServiceName),
@@ -263,7 +264,7 @@ func TestInferRemoteRobotDependencyConnectAtStartup(t *testing.T) {
 		},
 	}
 	ctx := context.Background()
-	foo := setupLocalRobot(t, ctx, fooCfg, logger.Sublogger("foo"))
+	foo := SetupLocalRobot(t, ctx, fooCfg, logger.Sublogger("foo"))
 
 	options, listener1, addr1 := robottestutils.CreateBaseOptionsAndListener(t)
 	err := foo.StartWeb(ctx, options)
@@ -288,7 +289,7 @@ func TestInferRemoteRobotDependencyConnectAtStartup(t *testing.T) {
 			},
 		},
 	}
-	r := setupLocalRobot(t, ctx, localConfig, logger.Sublogger("local"))
+	r := SetupLocalRobot(t, ctx, localConfig, logger.Sublogger("local"))
 	expectedSet := []resource.Name{
 		motion.Named(resource.DefaultServiceName),
 		sensors.Named(resource.DefaultServiceName),
@@ -311,7 +312,7 @@ func TestInferRemoteRobotDependencyConnectAtStartup(t *testing.T) {
 		)
 	})
 
-	foo2 := setupLocalRobot(t, ctx, fooCfg, logger.Sublogger("foo2"))
+	foo2 := SetupLocalRobot(t, ctx, fooCfg, logger.Sublogger("foo2"))
 
 	// Note: There's a slight chance this test can fail if someone else
 	// claims the port we just released by closing the server.
@@ -347,7 +348,7 @@ func TestInferRemoteRobotDependencyConnectAfterStartup(t *testing.T) {
 
 	ctx := context.Background()
 
-	foo := setupLocalRobot(t, ctx, fooCfg, logger.Sublogger("foo"))
+	foo := SetupLocalRobot(t, ctx, fooCfg, logger.Sublogger("foo"))
 
 	options, _, addr1 := robottestutils.CreateBaseOptionsAndListener(t)
 
@@ -370,7 +371,7 @@ func TestInferRemoteRobotDependencyConnectAfterStartup(t *testing.T) {
 			},
 		},
 	}
-	r := setupLocalRobot(t, ctx, localConfig, logger.Sublogger("local"))
+	r := SetupLocalRobot(t, ctx, localConfig, logger.Sublogger("local"))
 	rdktestutils.VerifySameResourceNames(t, r.ResourceNames(),
 		[]resource.Name{
 			motion.Named(resource.DefaultServiceName),
@@ -425,8 +426,8 @@ func TestInferRemoteRobotDependencyAmbiguous(t *testing.T) {
 
 	ctx := context.Background()
 
-	foo := setupLocalRobot(t, ctx, remoteCfg, logger.Sublogger("foo"))
-	bar := setupLocalRobot(t, ctx, remoteCfg, logger.Sublogger("bar"))
+	foo := SetupLocalRobot(t, ctx, remoteCfg, logger.Sublogger("foo"))
+	bar := SetupLocalRobot(t, ctx, remoteCfg, logger.Sublogger("bar"))
 
 	options1, _, addr1 := robottestutils.CreateBaseOptionsAndListener(t)
 	err := foo.StartWeb(ctx, options1)
@@ -459,7 +460,7 @@ func TestInferRemoteRobotDependencyAmbiguous(t *testing.T) {
 			},
 		},
 	}
-	r := setupLocalRobot(t, ctx, localConfig, logger.Sublogger("local"))
+	r := SetupLocalRobot(t, ctx, localConfig, logger.Sublogger("local"))
 
 	expectedSet := []resource.Name{
 		motion.Named(resource.DefaultServiceName),

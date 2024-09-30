@@ -23,6 +23,7 @@ import (
 	"go.viam.com/rdk/config"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/resource"
+
 	// TODO(RSDK-7884): change everything that depends on this import to a mock.
 	_ "go.viam.com/rdk/services/datamanager/builtin"
 	// TODO(RSDK-7884): change everything that depends on this import to a mock.
@@ -224,7 +225,7 @@ func TestRobotReconfigure(t *testing.T) {
 		})
 
 		ctx := context.Background()
-		robot := setupLocalRobot(t, ctx, conf1, logger)
+		robot := SetupLocalRobot(t, ctx, conf1, logger)
 
 		resources := robot.ResourceNames()
 		test.That(t, len(resources), test.ShouldEqual, 7)
@@ -401,7 +402,7 @@ func TestRobotReconfigure(t *testing.T) {
 				},
 			},
 		})
-		robot := setupLocalRobot(t, context.Background(), conf1, logger)
+		robot := SetupLocalRobot(t, context.Background(), conf1, logger)
 
 		armNames := []resource.Name{mockNamed("arm1")}
 		baseNames := []resource.Name{mockNamed("base1")}
@@ -677,7 +678,7 @@ func TestRobotReconfigure(t *testing.T) {
 				},
 			},
 		})
-		robot := setupLocalRobot(t, context.Background(), conf1, logger)
+		robot := SetupLocalRobot(t, context.Background(), conf1, logger)
 
 		armNames := []resource.Name{mockNamed("arm1")}
 		baseNames := []resource.Name{mockNamed("base1")}
@@ -933,7 +934,7 @@ func TestRobotReconfigure(t *testing.T) {
 				},
 			},
 		})
-		robot := setupLocalRobot(t, context.Background(), conf3, logger)
+		robot := SetupLocalRobot(t, context.Background(), conf3, logger)
 
 		armNames := []resource.Name{mockNamed("arm1"), mockNamed("arm2")}
 		baseNames := []resource.Name{mockNamed("base1"), mockNamed("base2")}
@@ -1148,7 +1149,7 @@ func TestRobotReconfigure(t *testing.T) {
 				},
 			},
 		})
-		robot := setupLocalRobot(t, context.Background(), conf2, logger)
+		robot := SetupLocalRobot(t, context.Background(), conf2, logger)
 
 		armNames := []resource.Name{mockNamed("arm1"), mockNamed("arm2")}
 		baseNames := []resource.Name{mockNamed("base1"), mockNamed("base2")}
@@ -1434,7 +1435,7 @@ func TestRobotReconfigure(t *testing.T) {
 				},
 			},
 		})
-		robot := setupLocalRobot(t, context.Background(), conf2, logger)
+		robot := SetupLocalRobot(t, context.Background(), conf2, logger)
 
 		armNames := []resource.Name{mockNamed("arm1"), mockNamed("arm2")}
 		baseNames := []resource.Name{mockNamed("base1"), mockNamed("base2")}
@@ -1655,7 +1656,7 @@ func TestRobotReconfigure(t *testing.T) {
 		})
 
 		ctx := context.Background()
-		robot := setupLocalRobot(t, ctx, cempty, logger)
+		robot := SetupLocalRobot(t, ctx, cempty, logger)
 
 		resources := robot.ResourceNames()
 		test.That(t, len(resources), test.ShouldEqual, 2)
@@ -1879,7 +1880,7 @@ func TestRobotReconfigure(t *testing.T) {
 				},
 			},
 		})
-		robot := setupLocalRobot(t, context.Background(), conf4, logger)
+		robot := SetupLocalRobot(t, context.Background(), conf4, logger)
 
 		boardNames := []resource.Name{mockNamed("board1"), mockNamed("board2")}
 		test.That(t, robot.RemoteNames(), test.ShouldBeEmpty)
@@ -2226,7 +2227,7 @@ func TestRobotReconfigure(t *testing.T) {
 				},
 			},
 		})
-		robot := setupLocalRobot(t, context.Background(), conf7, logger)
+		robot := SetupLocalRobot(t, context.Background(), conf7, logger)
 
 		boardNames := []resource.Name{mockNamed("board1"), mockNamed("board2")}
 		motorNames := []resource.Name{mockNamed("m1")}
@@ -2623,7 +2624,7 @@ func TestRobotReconfigure(t *testing.T) {
 				},
 			},
 		})
-		robot := setupLocalRobot(t, context.Background(), conf7, logger)
+		robot := SetupLocalRobot(t, context.Background(), conf7, logger)
 
 		boardNames := []resource.Name{mockNamed("board1"), mockNamed("board2")}
 		motorNames := []resource.Name{mockNamed("m1")}
@@ -3079,7 +3080,7 @@ func TestRobotReconfigure(t *testing.T) {
 				},
 			},
 		})
-		robot := setupLocalRobot(t, context.Background(), conf1, logger)
+		robot := SetupLocalRobot(t, context.Background(), conf1, logger)
 
 		armNames := []resource.Name{mockNamed("mock7")}
 		mockNames := []resource.Name{
@@ -3119,7 +3120,7 @@ func TestRobotReconfigure(t *testing.T) {
 		resetComponentFailureState()
 		logger := logging.NewTestLogger(t)
 		tempDir := t.TempDir()
-		robot := setupLocalRobot(t, context.Background(), &config.Config{}, logger)
+		robot := SetupLocalRobot(t, context.Background(), &config.Config{}, logger)
 
 		// create a unexecutable file
 		noExecF, err := os.CreateTemp(tempDir, "noexec*.sh")
@@ -3298,7 +3299,7 @@ func TestDefaultServiceReconfigure(t *testing.T) {
 			},
 		},
 	}
-	robot := setupLocalRobot(t, context.Background(), cfg1, logger)
+	robot := SetupLocalRobot(t, context.Background(), cfg1, logger)
 
 	rdktestutils.VerifySameResourceNames(t, robot.ResourceNames(),
 		[]resource.Name{
@@ -3346,7 +3347,7 @@ func TestStatusServiceUpdate(t *testing.T) {
 	}
 
 	t.Run("empty to not empty", func(t *testing.T) {
-		robot := setupLocalRobot(t, context.Background(), emptyCfg, logger)
+		robot := SetupLocalRobot(t, context.Background(), emptyCfg, logger)
 
 		_, err := robot.Status(context.Background(), resourceNames)
 		test.That(t, err.Error(), test.ShouldContainSubstring, "not found")
@@ -3361,7 +3362,7 @@ func TestStatusServiceUpdate(t *testing.T) {
 	})
 
 	t.Run("not empty to empty", func(t *testing.T) {
-		robot := setupLocalRobot(t, context.Background(), cfg, logger)
+		robot := SetupLocalRobot(t, context.Background(), cfg, logger)
 
 		statuses, err := robot.Status(context.Background(), resourceNames)
 		test.That(t, err, test.ShouldBeNil)
@@ -3376,7 +3377,7 @@ func TestStatusServiceUpdate(t *testing.T) {
 	})
 
 	t.Run("no change", func(t *testing.T) {
-		robot := setupLocalRobot(t, context.Background(), cfg, logger)
+		robot := SetupLocalRobot(t, context.Background(), cfg, logger)
 
 		statuses, err := robot.Status(context.Background(), resourceNames)
 		test.That(t, err, test.ShouldBeNil)
@@ -3430,7 +3431,7 @@ func TestReconfigureModelRebuild(t *testing.T) {
 
 	ctx := context.Background()
 
-	r := setupLocalRobot(t, ctx, cfg, logger)
+	r := SetupLocalRobot(t, ctx, cfg, logger)
 
 	name1 := mockNamed("one")
 	res1, err := r.ResourceByName(name1)
@@ -3518,7 +3519,7 @@ func TestReconfigureModelSwitch(t *testing.T) {
 
 	ctx := context.Background()
 
-	r := setupLocalRobot(t, ctx, cfg, logger)
+	r := SetupLocalRobot(t, ctx, cfg, logger)
 
 	name1 := mockNamed("one")
 	res1, err := r.ResourceByName(name1)
@@ -3593,7 +3594,7 @@ func TestReconfigureModelSwitchErr(t *testing.T) {
 
 	ctx := context.Background()
 
-	r := setupLocalRobot(t, ctx, cfg, logger)
+	r := SetupLocalRobot(t, ctx, cfg, logger)
 	test.That(t, newCount, test.ShouldEqual, 1)
 
 	name1 := mockNamed("one")
@@ -3672,7 +3673,7 @@ func TestReconfigureRename(t *testing.T) {
 
 	ctx := context.Background()
 
-	r := setupLocalRobot(t, ctx, cfg, logger)
+	r := SetupLocalRobot(t, ctx, cfg, logger)
 
 	name1 := mockNamed("one")
 	name2 := mockNamed("two")
@@ -3755,12 +3756,12 @@ func TestResourceConstructTimeout(t *testing.T) {
 				test.ShouldBeNil)
 		}()
 
-		r := setupLocalRobot(t, context.Background(), cfg, logger)
+		r := SetupLocalRobot(t, context.Background(), cfg, logger)
 		test.That(t, r.Close(context.Background()), test.ShouldBeNil)
 	})
 	t.Run("reconfigure", func(t *testing.T) {
 		timeout = rutils.DefaultResourceConfigurationTimeout
-		r := setupLocalRobot(t, context.Background(), cfg, logger)
+		r := SetupLocalRobot(t, context.Background(), cfg, logger)
 
 		timeout = 200 * time.Millisecond
 		test.That(t, os.Setenv(rutils.ResourceConfigurationTimeoutEnvVar, timeout.String()),
@@ -3857,14 +3858,14 @@ func TestResourceConstructCtxCancel(t *testing.T) {
 
 	t.Run("new", func(t *testing.T) {
 		th := setupTest(t)
-		setupLocalRobot(t, th.ctx, th.cfg, logger)
+		SetupLocalRobot(t, th.ctx, th.cfg, logger)
 
 		th.wg.Wait()
 		test.That(t, th.constructCount, test.ShouldEqual, 1)
 	})
 	t.Run("reconfigure", func(t *testing.T) {
 		th := setupTest(t)
-		r := setupLocalRobot(t, context.Background(), &config.Config{}, logger)
+		r := SetupLocalRobot(t, context.Background(), &config.Config{}, logger)
 		test.That(t, th.constructCount, test.ShouldEqual, 0)
 
 		r.Reconfigure(th.ctx, th.cfg)
@@ -3922,7 +3923,7 @@ func TestResourceConstructCtxDone(t *testing.T) {
 
 	t.Run("new and add normally", func(t *testing.T) {
 		th := setupTest(t, false)
-		setupLocalRobot(t, th.ctx, th.cfg, logger)
+		SetupLocalRobot(t, th.ctx, th.cfg, logger)
 
 		test.That(t, th.constructCount, test.ShouldEqual, 1)
 		test.That(t, th.mf.closeCount, test.ShouldEqual, 0)
@@ -3931,7 +3932,7 @@ func TestResourceConstructCtxDone(t *testing.T) {
 	t.Run("reconfiguring and add resource normally", func(t *testing.T) {
 		th := setupTest(t, false)
 
-		r := setupLocalRobot(t, context.Background(), &config.Config{}, logger)
+		r := SetupLocalRobot(t, context.Background(), &config.Config{}, logger)
 
 		test.That(t, th.constructCount, test.ShouldEqual, 0)
 		test.That(t, th.mf.closeCount, test.ShouldEqual, 0)
@@ -3954,7 +3955,7 @@ func TestResourceConstructCtxDone(t *testing.T) {
 	t.Run("reconfiguring and cancel context during resource add", func(t *testing.T) {
 		th := setupTest(t, true)
 
-		r := setupLocalRobot(t, context.Background(), &config.Config{}, logger)
+		r := SetupLocalRobot(t, context.Background(), &config.Config{}, logger)
 
 		test.That(t, th.constructCount, test.ShouldEqual, 0)
 		test.That(t, th.mf.closeCount, test.ShouldEqual, 0)
@@ -4005,7 +4006,7 @@ func TestResourceCloseNoHang(t *testing.T) {
 			},
 		},
 	}
-	r := setupLocalRobot(t, context.Background(), cfg, logger)
+	r := SetupLocalRobot(t, context.Background(), cfg, logger)
 
 	test.That(t, r.Close(context.Background()), test.ShouldBeNil)
 	test.That(t, mf.closeCtxDeadline, test.ShouldNotBeNil)

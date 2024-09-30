@@ -26,6 +26,7 @@ import (
 	"go.viam.com/rdk/config"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/resource"
+
 	// TODO(RSDK-7884): change everything that depends on this import to a mock.
 	"go.viam.com/rdk/services/sensors"
 	rdktestutils "go.viam.com/rdk/testutils"
@@ -82,7 +83,7 @@ func TestSensorsServiceReconfigure(t *testing.T) {
 	sensorNames := []resource.Name{movementsensor.Named("movement_sensor1"), movementsensor.Named("movement_sensor2")}
 
 	t.Run("empty to two sensors", func(t *testing.T) {
-		robot := setupLocalRobot(t, context.Background(), emptyCfg, logger)
+		robot := SetupLocalRobot(t, context.Background(), emptyCfg, logger)
 
 		svc, err := sensors.FromRobot(robot, resource.DefaultServiceName)
 		test.That(t, err, test.ShouldBeNil)
@@ -99,7 +100,7 @@ func TestSensorsServiceReconfigure(t *testing.T) {
 	})
 
 	t.Run("two sensors to empty", func(t *testing.T) {
-		robot := setupLocalRobot(t, context.Background(), cfg, logger)
+		robot := SetupLocalRobot(t, context.Background(), cfg, logger)
 
 		svc, err := sensors.FromRobot(robot, resource.DefaultServiceName)
 		test.That(t, err, test.ShouldBeNil)
@@ -116,7 +117,7 @@ func TestSensorsServiceReconfigure(t *testing.T) {
 	})
 
 	t.Run("two sensors to two sensors", func(t *testing.T) {
-		robot := setupLocalRobot(t, context.Background(), cfg, logger)
+		robot := SetupLocalRobot(t, context.Background(), cfg, logger)
 
 		svc, err := sensors.FromRobot(robot, resource.DefaultServiceName)
 		test.That(t, err, test.ShouldBeNil)
@@ -181,7 +182,7 @@ func TestUpdateWeakDependents(t *testing.T) {
 	var emptyCfg config.Config
 	test.That(t, emptyCfg.Ensure(false, logger), test.ShouldBeNil)
 
-	robot := setupLocalRobot(t, context.Background(), &emptyCfg, logger)
+	robot := SetupLocalRobot(t, context.Background(), &emptyCfg, logger)
 
 	// Register a `Resource` that generates weak dependencies. Specifically instance of
 	// this resource will depend on every `component` resource. See the definition of

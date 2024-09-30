@@ -1182,7 +1182,7 @@ func TestConfigRemoteAllowInsecureCreds(t *testing.T) {
 
 	ctx := context.Background()
 
-	r := setupLocalRobot(t, ctx, cfg, logger)
+	r := SetupLocalRobot(t, ctx, cfg, logger)
 
 	altName := primitive.NewObjectID().Hex()
 	cert, certFile, keyFile, certPool, err := testutils.GenerateSelfSignedCertificate("somename", altName)
@@ -1521,7 +1521,7 @@ func TestReconfigure(t *testing.T) {
 	test.That(t, err, test.ShouldBeNil)
 
 	ctx := context.Background()
-	r := setupLocalRobot(t, ctx, cfg, logger)
+	r := SetupLocalRobot(t, ctx, cfg, logger)
 
 	resource.RegisterAPI(api, resource.APIRegistration[resource.Resource]{})
 	defer func() {
@@ -1601,8 +1601,8 @@ func TestRemoteConnClosedOnReconfigure(t *testing.T) {
 	}
 
 	t.Run("remotes with same exact resources", func(t *testing.T) {
-		remote1 := setupLocalRobot(t, ctx, remoteCfg1, logger.Sublogger("remote1"))
-		remote2 := setupLocalRobot(t, ctx, remoteCfg1, logger.Sublogger("remote2"))
+		remote1 := SetupLocalRobot(t, ctx, remoteCfg1, logger.Sublogger("remote1"))
+		remote2 := SetupLocalRobot(t, ctx, remoteCfg1, logger.Sublogger("remote2"))
 
 		options1, _, addr1 := robottestutils.CreateBaseOptionsAndListener(t)
 		err := remote1.StartWeb(ctx, options1)
@@ -1624,7 +1624,7 @@ func TestRemoteConnClosedOnReconfigure(t *testing.T) {
 
 		// Make a copy of the main robot config as reconfigure will directly modify it
 		mainCfgCopy := *mainRobotCfg
-		mainRobot := setupLocalRobot(t, ctx, mainRobotCfg, logger.Sublogger("main"))
+		mainRobot := SetupLocalRobot(t, ctx, mainRobotCfg, logger.Sublogger("main"))
 
 		// Grab motor of remote1 to check that it won't work after switching remotes
 		motor1, err := motor.FromRobot(mainRobot, "motor")
@@ -1679,8 +1679,8 @@ func TestRemoteConnClosedOnReconfigure(t *testing.T) {
 	})
 
 	t.Run("remotes with different resources", func(t *testing.T) {
-		remote1 := setupLocalRobot(t, ctx, remoteCfg2, logger.Sublogger("remote1"))
-		remote2 := setupLocalRobot(t, ctx, remoteCfg1, logger.Sublogger("remote2"))
+		remote1 := SetupLocalRobot(t, ctx, remoteCfg2, logger.Sublogger("remote1"))
+		remote2 := SetupLocalRobot(t, ctx, remoteCfg1, logger.Sublogger("remote2"))
 
 		options1, _, addr1 := robottestutils.CreateBaseOptionsAndListener(t)
 		err := remote1.StartWeb(ctx, options1)
@@ -1702,7 +1702,7 @@ func TestRemoteConnClosedOnReconfigure(t *testing.T) {
 
 		// Make a copy of the main robot config as reconfigure will directly modify it
 		mainCfgCopy := *mainRobotCfg
-		mainRobot := setupLocalRobot(t, ctx, mainRobotCfg, logger.Sublogger("main"))
+		mainRobot := SetupLocalRobot(t, ctx, mainRobotCfg, logger.Sublogger("main"))
 
 		// Grab arm of remote1 to check that it won't work after switching remotes
 		arm1, err := arm.FromRobot(mainRobot, "arm")
@@ -1759,7 +1759,7 @@ func TestResourceCreationPanic(t *testing.T) {
 	logger := logging.NewTestLogger(t)
 	ctx := context.Background()
 
-	r := setupLocalRobot(t, ctx, &config.Config{}, logger)
+	r := SetupLocalRobot(t, ctx, &config.Config{}, logger)
 	manager := managerForDummyRobot(t, r)
 
 	t.Run("component", func(t *testing.T) {
@@ -2031,9 +2031,9 @@ func TestReconfigureParity(t *testing.T) {
 			// Configuration may mutate `*config.Config`, so we read it from
 			// file each time.
 			cfg := ConfigFromFile(t, initCfg)
-			r1 := setupLocalRobot(t, ctx, cfg, logger).(*localRobot)
+			r1 := SetupLocalRobot(t, ctx, cfg, logger).(*localRobot)
 			cfg = ConfigFromFile(t, initCfg)
-			r2 := setupLocalRobot(t, ctx, cfg, logger).(*localRobot)
+			r2 := SetupLocalRobot(t, ctx, cfg, logger).(*localRobot)
 
 			rdktestutils.VerifySameResourceNames(t, r1.ResourceNames(), r2.ResourceNames())
 

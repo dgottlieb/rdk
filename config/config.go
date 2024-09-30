@@ -40,6 +40,7 @@ type Config struct {
 	Auth       AuthConfig
 	Debug      bool
 	LogConfig  []logging.LoggerPatternConfig
+	FTDC       string
 
 	ConfigFilePath string
 

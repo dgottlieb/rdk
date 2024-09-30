@@ -407,7 +407,7 @@ func newWithResources(
 		opt.apply(&rOpts)
 	}
 
-	ftdcJob := ftdc.New(logger.Sublogger("ftdc"))
+	ftdcJob := ftdc.NewWithOutputFormat(logger.Sublogger("ftdc"), cfg.FTDC)
 	ftdcJob.Start()
 	closeCtx, cancel := context.WithCancel(ctx)
 	r := &localRobot{

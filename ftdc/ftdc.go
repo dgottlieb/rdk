@@ -22,8 +22,10 @@ type namedStatser struct {
 }
 
 type Datum struct {
-	time         int64
-	data         map[string]any
+	// Public fields for json serializing
+	Time int64
+	Data map[string]any
+
 	generationId int
 }
 
@@ -34,9 +36,9 @@ type FTDC struct {
 	things             []namedStatser
 	thingsGenerationId int
 	statsWorker        *utils.StoppableWorkers
+	outputFormat       string
 	statsCh            chan Datum
 
-	outputFile       *os.File
 	outputWorkerDone chan struct{}
 	logger           logging.Logger
 }
@@ -45,15 +47,16 @@ type Schema struct{}
 
 func New(logger logging.Logger) *FTDC {
 	return &FTDC{
-		json:             true,
+		outputFormat:     "json",
 		statsCh:          make(chan Datum, 100),
 		outputWorkerDone: make(chan struct{}),
 		logger:           logger,
 	}
 }
 
-func NewOptimized(logger logging.Logger) *FTDC {
+func NewWithOutputFormat(logger logging.Logger, outputFormat string) *FTDC {
 	return &FTDC{
+		outputFormat:     outputFormat,
 		statsCh:          make(chan Datum, 100),
 		outputWorkerDone: make(chan struct{}),
 		logger:           logger,
@@ -95,12 +98,15 @@ func (ftdc *FTDC) Remove(name string) {
 }
 
 func (ftdc *FTDC) Start() {
-	ftdc.statsWorker = utils.NewStoppableWorkerWithTicker(time.Second, ftdc.doWork)
+	ftdc.statsWorker = utils.NewStoppableWorkerWithTicker(time.Second, ftdc.producerFn)
 	go func() {
+		outputFile, err := os.Create("./viam-server.ftdc")
+		if err != nil {
+			ftdc.logger.Warnw("FTDC failed to open file", "err", err)
+			return
+		}
 		defer func() {
-			if ftdc.outputFile != nil {
-				ftdc.outputFile.Close()
-			}
+			outputFile.Close()
 			close(ftdc.outputWorkerDone)
 		}()
 
@@ -112,52 +118,62 @@ func (ftdc *FTDC) Start() {
 			if lastGenerationId != datum.generationId {
 				rewriteHeaders = true
 			}
-			_ = rewriteHeaders
 
-			ftdc.output(datum, nil)
+			if err := ftdc.output(datum, rewriteHeaders, outputFile); err != nil {
+				break
+			}
 		}
 	}()
 }
 
-func (ftdc *FTDC) doWork(ctx context.Context) {
+func (ftdc *FTDC) producerFn(ctx context.Context) {
 	datum := Datum{
-		time: time.Now().Unix(),
-		data: map[string]any{},
+		Time: time.Now().Unix(),
+		Data: map[string]any{},
 	}
 
 	ftdc.mu.Lock()
 	datum.generationId = ftdc.thingsGenerationId
 	for idx := range ftdc.things {
 		thing := &ftdc.things[idx]
-		datum.data[thing.name] = thing.statser.Stats()
+		datum.Data[thing.name] = thing.statser.Stats()
 	}
 	ftdc.mu.Unlock()
 
-	ftdc.statsCh <- datum
-	ftdc.logger.Debugw("Metrics collected", "datum", datum)
+	select {
+	case ftdc.statsCh <- datum:
+		break
+	case <-ftdc.outputWorkerDone:
+		break
+	}
+	// `Debugw` does not seem to serialize any of the `datum` value.
+	ftdc.logger.Debugf("Metrics collected. Datum: %+v", datum)
 }
 
-func (ftdc *FTDC) output(datum Datum, schema *Schema) {
+func (ftdc *FTDC) output(datum Datum, rewriteHeaders bool, outputFile *os.File) error {
 	var err error
-	if ftdc.outputFile == nil {
-		ftdc.outputFile, err = os.Create("./viam-server.ftdc")
-		if err != nil {
-			ftdc.logger.Warnw("FTDC failed to open file", "err", err)
-			return
-		}
-	}
-
+	ftdc.logger.Debugf("Outputting metrics. Datum: %+v", datum)
 	datumBytes, err := json.Marshal(datum)
 	if err != nil {
 		ftdc.logger.Warnw("Failed to turn ftdc data into json", "err", err)
-		return
+		return err
 	}
-	_, err = ftdc.outputFile.Write(datumBytes)
+
+	_, err = outputFile.Write(datumBytes)
 	if err != nil {
 		ftdc.logger.Warnw("Failed to write ftdc data to file", "err", err)
-		ftdc.outputFile.Close()
-		ftdc.outputFile = nil
+		outputFile.Close()
+		return err
 	}
+
+	_, err = outputFile.Write([]byte("\n"))
+	if err != nil {
+		ftdc.logger.Warnw("Failed to write ftdc data to file", "err", err)
+		outputFile.Close()
+		return err
+	}
+
+	return nil
 }
 
 func (ftdc *FTDC) StopAndJoin() {
@@ -168,9 +184,6 @@ func (ftdc *FTDC) StopAndJoin() {
 	// limit how long we're willing to wait for the `outputWorker` to drain.
 	select {
 	case <-ftdc.outputWorkerDone:
-		if ftdc.outputFile != nil {
-			_ = ftdc.outputFile.Close()
-		}
 	case <-time.After(10 * time.Second):
 	}
 }
