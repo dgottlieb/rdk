@@ -12,12 +12,9 @@ class GnuPlotWriter(object):
         self.png_filename = None
 
     def play(self, obj):
-        #pprint(obj)
-        start, end = obj["_timeStart"], obj["_timeEnd"]
-        for key, value in obj.items():
-            if key.startswith('_'):
-                continue
-
+        pprint(obj)
+        start = obj["Time"]
+        for key, value in obj["Data"].items():
             self.play_val(start, key, value)
 
     def play_val(self, time, keyns, inp_value):
@@ -40,9 +37,9 @@ class GnuPlotWriter(object):
 
     def plot(self, render_options):
         #outfile = NamedTemporaryFile(mode='w')
-        outfile = open('/home/dgottlieb/viam/rdk/plot_py.gpl', 'w')
+        outfile = open('/home/dgottlieb/viam/rdk/ftdc/plot_py.gpl', 'w')
         if not self.png_filename:
-            self.png_filename = '/home/dgottlieb/viam/rdk/plot_py.png'
+            self.png_filename = '/home/dgottlieb/viam/rdk/ftdc/plot_py.png'
 
         def writeln(line):
             outfile.write(f'{line}\n')
@@ -93,11 +90,11 @@ def main():
                         break
                 except:
                     break
-                idx += subIdx
+                idx += subIdx + 1 # +1 for newline
 
                 if not mn_time and not mx_time:
                     plots.play(obj)
-                elif mn_time <= obj["_timeStart"] and obj["_timeStart"] <= mx_time:
+                elif mn_time <= obj["Time"] and obj["Time"] <= mx_time:
                     plots.play(obj)
 
             plots.plot(render_options)
