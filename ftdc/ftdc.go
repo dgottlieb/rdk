@@ -45,8 +45,6 @@ type FTDC struct {
 	logger           logging.Logger
 }
 
-type Schema struct{}
-
 func New(logger logging.Logger) *FTDC {
 	return &FTDC{
 		outputFormat:     "json",
