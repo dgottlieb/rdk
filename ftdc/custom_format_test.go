@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"testing"
 	"time"
+
+	"go.viam.com/rdk/logging"
 )
 
 type Statser1 struct {
@@ -20,7 +22,8 @@ type Statser2 struct {
 	Metric3 float32
 }
 
-func TestFormat(t *testing.T) {
+// TestREPL refers to using the Test as a fast-feedback "REPL"
+func TestREPL(t *testing.T) {
 	datum := Datum{
 		Time: time.Now().Unix(),
 		Data: map[string]any{
@@ -44,6 +47,8 @@ func TestFormat(t *testing.T) {
 		fmt.Println(string(stdout))
 	}()
 
+	fmt.Println(getSchema(datum.Data))
+
 	schema := &Schema{
 		mapOrder: []string{"s1", "s2"},
 		fields:   []string{"s1.Metric1", "s1.Metric2", "s1.Metric3", "s2.Metric1", "s2.Metric2", "s2.Metric3"},
@@ -66,4 +71,43 @@ func TestFormat(t *testing.T) {
 	flatten2 := flatten(datum2, schema.mapOrder)
 	writeDatum(flatten1, flatten2, testFile)
 
+}
+
+func TestCustomFormat(t *testing.T) {
+	logger := logging.NewTestLogger(t)
+	ftdc := NewWithOutputFormat(logger, "custom")
+
+	for idx := 0; idx < 10; idx++ {
+		datumV1 := Datum{
+			Time: int64(idx),
+			Data: map[string]any{
+				"s1": Statser1{0, idx, 1.0},
+			},
+			generationId: 1,
+		}
+
+		ftdc.newDatum(datumV1)
+	}
+
+	for idx := 10; idx < 20; idx++ {
+		datumV2 := Datum{
+			Time: int64(idx),
+			Data: map[string]any{
+				"s1": Statser1{idx, idx, 1.0},
+				"s2": Statser2{0, 1 + (idx / 5), 100.0},
+			},
+			generationId: 2,
+		}
+
+		ftdc.newDatum(datumV2)
+	}
+
+	ftdc.currOutputFile.Close()
+
+	ftdcFile, err := os.Open("./viam-server-custom.ftdc")
+	if err != nil {
+		panic(err)
+	}
+	parsed := parse(ftdcFile)
+	fmt.Println("Parsed:", parsed)
 }

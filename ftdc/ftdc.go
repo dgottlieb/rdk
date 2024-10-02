@@ -34,12 +34,17 @@ type Datum struct {
 type FTDC struct {
 	json bool
 
-	mu                 sync.Mutex
-	things             []namedStatser
-	thingsGenerationId int
-	statsWorker        *utils.StoppableWorkers
-	outputFormat       string
+	mu                sync.Mutex
+	things            []namedStatser
+	inputGenerationId int
+	statsWorker       *utils.StoppableWorkers
+	outputFormat      string
+
 	statsCh            chan Datum
+	currOutputFile     *os.File
+	outputGenerationId int
+	currSchema         *Schema
+	prevFlatData       []float32
 
 	outputWorkerDone chan struct{}
 	logger           logging.Logger
@@ -81,7 +86,7 @@ func (ftdc *FTDC) Add(name string, statser Statser) {
 		name:    name,
 		statser: statser,
 	})
-	ftdc.thingsGenerationId++
+	ftdc.inputGenerationId++
 }
 
 func (ftdc *FTDC) Remove(name string) {
@@ -94,7 +99,7 @@ func (ftdc *FTDC) Remove(name string) {
 		}
 	}
 
-	ftdc.thingsGenerationId++
+	ftdc.inputGenerationId++
 }
 
 func (ftdc *FTDC) Start() {
@@ -141,7 +146,7 @@ func (ftdc *FTDC) producerFn(ctx context.Context) {
 	}
 
 	ftdc.mu.Lock()
-	datum.generationId = ftdc.thingsGenerationId
+	datum.generationId = ftdc.inputGenerationId
 	for idx := range ftdc.things {
 		thing := &ftdc.things[idx]
 		datum.Data[thing.name] = thing.statser.Stats()
@@ -193,4 +198,31 @@ func (ftdc *FTDC) StopAndJoin() {
 	case <-ftdc.outputWorkerDone:
 	case <-time.After(10 * time.Second):
 	}
+}
+
+func (ftdc *FTDC) newDatum(datum Datum) error {
+	if ftdc.currOutputFile == nil {
+		var err error
+		ftdc.currOutputFile, err = os.Create(fmt.Sprintf("./viam-server-%s.ftdc", ftdc.outputFormat))
+		if err != nil {
+			ftdc.logger.Warnw("FTDC failed to open file", "err", err)
+			return err
+		}
+	}
+	outputFile := ftdc.currOutputFile
+
+	if datum.generationId != ftdc.outputGenerationId {
+		ftdc.currSchema = getSchema(datum.Data)
+		writeSchema(ftdc.currSchema, outputFile)
+		data := flatten(datum, ftdc.currSchema.mapOrder)
+		writeDatum(nil, data, outputFile)
+		ftdc.prevFlatData = data
+		ftdc.outputGenerationId = datum.generationId
+		return nil
+	}
+
+	data := flatten(datum, ftdc.currSchema.mapOrder)
+	writeDatum(ftdc.prevFlatData, data, outputFile)
+	ftdc.prevFlatData = data
+	return nil
 }
