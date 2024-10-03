@@ -25,6 +25,10 @@ func getSchema(data map[string]any) *Schema {
 	for _, key := range mapOrder {
 		stats := data[key]
 		rType := reflect.TypeOf(stats)
+		if val := reflect.ValueOf(stats); val.Kind() == reflect.Pointer {
+			rType = reflect.TypeOf(val.Elem())
+		}
+
 		for memberIdx := 0; memberIdx < rType.NumField(); memberIdx++ {
 			fields = append(fields, fmt.Sprintf("%v.%v", key, rType.Field(memberIdx).Name))
 		}
@@ -47,6 +51,9 @@ func flatten(datum Datum, mapOrder []string) []float32 {
 		}
 
 		rVal := reflect.ValueOf(stats)
+		if rVal.Kind() == reflect.Pointer {
+			rVal = rVal.Elem()
+		}
 		for memberIdx := 0; memberIdx < rVal.NumField(); memberIdx++ {
 			rField := rVal.Field(memberIdx)
 			switch {

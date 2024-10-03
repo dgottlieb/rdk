@@ -83,19 +83,21 @@ func TestCustomFormat(t *testing.T) {
 	logger := logging.NewTestLogger(t)
 	ftdc := NewWithOutputFormat(logger, "custom")
 
-	debug := false
+	debug := true
 	if debug {
 		datum := Datum{
 			Time: 0,
 			Data: map[string]any{
-				"s1": Basic{1},
+				"s1": &Basic{1},
 			},
 			generationId: 1,
 		}
 
 		ftdc.newDatum(datum)
+		datum.Data["s1"].(*Basic).Foo = 2
+		ftdc.newDatum(datum)
 	} else {
-		datums := 10
+		datums := 2
 		for idx := 0; idx < datums; idx++ {
 			datumV1 := Datum{
 				Time: int64(idx),
@@ -129,6 +131,7 @@ func TestCustomFormat(t *testing.T) {
 		panic(err)
 	}
 
+	fmt.Println("Parsing")
 	parsed, err := parse(ftdcFile)
 	if err != nil {
 		panic(err)
