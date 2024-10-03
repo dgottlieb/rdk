@@ -57,7 +57,7 @@ func TestREPL(t *testing.T) {
 
 	flatten1 := flatten(datum, schema.mapOrder)
 	fmt.Println("Flatten:", flatten1)
-	writeDatum(nil, flatten1, testFile)
+	writeDatum(nil, flatten1, testFile, nil)
 
 	datum2 := Datum{
 		Time: time.Now().Unix(),
@@ -69,7 +69,7 @@ func TestREPL(t *testing.T) {
 	}
 
 	flatten2 := flatten(datum2, schema.mapOrder)
-	writeDatum(flatten1, flatten2, testFile)
+	writeDatum(flatten1, flatten2, testFile, nil)
 
 }
 
@@ -88,14 +88,14 @@ func TestCustomFormat(t *testing.T) {
 		datum := Datum{
 			Time: 0,
 			Data: map[string]any{
-				"s1": Basic{0},
+				"s1": Basic{1},
 			},
 			generationId: 1,
 		}
 
 		ftdc.newDatum(datum)
 	} else {
-		datums := 1
+		datums := 10
 		for idx := 0; idx < datums; idx++ {
 			datumV1 := Datum{
 				Time: int64(idx),
@@ -134,4 +134,12 @@ func TestCustomFormat(t *testing.T) {
 		panic(err)
 	}
 	fmt.Println("Parsed:", parsed)
+	// fmt.Println("Wrote:", ftdc.inmemBuffer.Bytes())
+	// for idx, val := range ftdc.inmemBuffer.Bytes() {
+	//  	fmt.Printf("%x ", val)
+	//  	if idx%8 == 0 {
+	//  		fmt.Println()
+	//  	}
+	// }
+	// fmt.Println()
 }

@@ -65,12 +65,13 @@ func flatten(datum Datum, mapOrder []string) []float32 {
 	return ret
 }
 
-func writeDatum(prev, curr []float32, output io.Writer) {
+func writeDatum(prev, curr []float32, output io.Writer, ftdc *FTDC) {
 	numPts := len(curr)
 	if numPts == 0 {
 		panic("No points?")
 	}
 
+	fmt.Println("WriteDatum:", prev, curr)
 	if len(prev) != 0 && numPts != len(prev) {
 		panic(fmt.Sprintf("Bad input sizes. Prev: %v Curr: %v", len(prev), len(curr)))
 	}
@@ -105,13 +106,30 @@ func writeDatum(prev, curr []float32, output io.Writer) {
 			matchingBits[byteIdx] |= (1 << bitOffset)
 		}
 	}
+	fmt.Println("MatchingBits:", matchingBits)
 
 	// Write out bits signaling which metrics in the schema changed.
 	// for _, bits := range matchingBits {
 	//  	fmt.Printf("Bits: %#b\n", bits)
 	// }
-	fmt.Printf("Writing byte: %b\n", matchingBits[0])
+	fmt.Printf("Writing byte: %x %b\n", matchingBits[0], matchingBits[0])
+	fmt.Println("PreWrote:", ftdc.inmemBuffer.Bytes())
+	for idx, val := range ftdc.inmemBuffer.Bytes() {
+		fmt.Printf("%x ", val)
+		if idx%8 == 0 {
+			fmt.Println()
+		}
+	}
+	fmt.Println()
 	output.Write(matchingBits)
+	fmt.Println("PostWrote:", ftdc.inmemBuffer.Bytes())
+	for idx, val := range ftdc.inmemBuffer.Bytes() {
+		fmt.Printf("%x ", val)
+		if idx%8 == 0 {
+			fmt.Println()
+		}
+	}
+	fmt.Println()
 
 	// Write out values for metrics that changed across reading.
 	for _, diff := range diffs {
@@ -119,12 +137,21 @@ func writeDatum(prev, curr []float32, output io.Writer) {
 			binary.Write(output, binary.BigEndian, diff)
 		}
 	}
+	fmt.Println("PostDiff:", ftdc.inmemBuffer.Bytes())
+	for idx, val := range ftdc.inmemBuffer.Bytes() {
+		fmt.Printf("%x ", val)
+		if idx%8 == 0 {
+			fmt.Println()
+		}
+	}
+	fmt.Println()
 }
 
 func writeSchema(schema *Schema, output io.Writer) {
 	// New schema byte
 	output.Write([]byte{0x1})
 	encoder := json.NewEncoder(output)
+	// This appends a newline character. Parser must pass over that.
 	encoder.Encode(schema.fields)
 }
 
@@ -137,6 +164,14 @@ func readSchema(reader *bufio.Reader) (*Schema, *bufio.Reader) {
 	var fields []string
 	if err := decoder.Decode(&fields); err != nil {
 		panic(err)
+	}
+
+	retReader := bufio.NewReader(io.MultiReader(decoder.Buffered(), reader))
+	// Read newline
+	ch, _ := retReader.ReadByte()
+	if ch != '\n' {
+		fmt.Printf("CH?? %x\n", ch)
+		panic("not a newline")
 	}
 
 	// We now have fields, e.g: ["metric1.Foo", "metric1.Bar", "metric2.Foo"]. The `mapOrder` should
@@ -154,7 +189,7 @@ func readSchema(reader *bufio.Reader) (*Schema, *bufio.Reader) {
 	return &Schema{
 		fields:   fields,
 		mapOrder: mapOrder,
-	}, bufio.NewReader(io.MultiReader(decoder.Buffered(), reader))
+	}, retReader
 }
 
 func readDiffBits(reader *bufio.Reader, schema *Schema) []int {
@@ -171,19 +206,23 @@ func readDiffBits(reader *bufio.Reader, schema *Schema) []int {
 
 	fmt.Println("ReadFull. NumBytes:", numBytes)
 	for idx, diffByt := range diffBytes {
+		var printDiffByt byte = diffByt
 		if idx == 0 {
 			fmt.Printf("  Orig: %b\n", diffByt)
-			diffByt = diffByt >> 1
+			printDiffByt = printDiffByt >> 1
 		}
-		fmt.Printf("  %b\n", diffByt)
+		fmt.Printf("  %b\n", printDiffByt)
 	}
 	var ret []int
 	for fieldIdx := 0; fieldIdx < len(schema.fields); fieldIdx++ {
+		fmt.Println("Checking:", fieldIdx, "DiffByte:", diffBytes)
 		bitIdx := fieldIdx + 1
 		diffByteOffset := bitIdx / 8
 		bitOffset := bitIdx % 8
 
-		if bitValue := diffBytes[diffByteOffset] & (1 << bitOffset); bitValue == 1 {
+		fmt.Println("DiffByteOff:", diffByteOffset, "BitOffset:", bitOffset)
+
+		if bitValue := diffBytes[diffByteOffset] & (1 << bitOffset); bitValue > 0 {
 			ret = append(ret, fieldIdx)
 		}
 	}
@@ -191,8 +230,30 @@ func readDiffBits(reader *bufio.Reader, schema *Schema) []int {
 	return ret
 }
 
-func readData(reader *bufio.Reader, schema *Schema, diffedFields []int) (map[string]any, error) {
-	return nil, nil
+func readData(reader *bufio.Reader, schema *Schema, diffedFields []int, prevValues []float32) ([]float32, error) {
+	var ret []float32
+	for dataIdx := 0; dataIdx < len(schema.fields); dataIdx++ {
+		diffFromPrev := false
+		for _, fieldIdx := range diffedFields {
+			if dataIdx == fieldIdx {
+				diffFromPrev = true
+				break
+			}
+		}
+
+		if diffFromPrev {
+			ret = append(ret, 0.0)
+			binary.Read(reader, binary.BigEndian, &ret[dataIdx])
+			fmt.Println("Read value:", ret[dataIdx])
+		} else {
+			if prevValues == nil {
+				ret = append(ret, 0.0)
+			} else {
+				ret = append(ret, prevValues[dataIdx])
+			}
+		}
+	}
+	return ret, nil
 }
 
 func (schema *Schema) MapToNames(fieldIndexes []int) []string {
@@ -204,9 +265,28 @@ func (schema *Schema) MapToNames(fieldIndexes []int) []string {
 	return ret
 }
 
+func (schema *Schema) Hydrate(data []float32) map[string]any {
+	ret := make(map[string]any)
+	for fieldIdx, metricName := range schema.fields {
+		statsName := metricName[:strings.Index(metricName, ".")]
+		metricName = metricName[strings.Index(metricName, ".")+1:]
+
+		if mp, exists := ret[statsName]; exists {
+			mp.(map[string]float32)[metricName] = data[fieldIdx]
+		} else {
+			mp := map[string]float32{
+				metricName: data[fieldIdx],
+			}
+			ret[statsName] = mp
+		}
+	}
+	return ret
+}
+
 func parse(rawReader io.Reader) ([]map[string]any, error) {
 	ret := make([]map[string]any, 0)
 
+	var prevValues []float32
 	// bufio's Reader allows for peeking and potentially better control over how much data to read
 	// from disk at a time.
 	reader := bufio.NewReader(rawReader)
@@ -227,6 +307,7 @@ func parse(rawReader io.Reader) ([]map[string]any, error) {
 			// Advances to end of json
 			_, _ = reader.ReadByte()
 			schema, reader = readSchema(reader)
+			prevValues = nil
 			fmt.Println("Schema:", schema)
 			continue
 		} else if schema == nil {
@@ -235,12 +316,14 @@ func parse(rawReader io.Reader) ([]map[string]any, error) {
 
 		diffedFields := readDiffBits(reader, schema)
 		fmt.Println("DiffedFields:", diffedFields, "Mapped:", schema.MapToNames(diffedFields))
-		data, err := readData(reader, schema, diffedFields)
+		data, err := readData(reader, schema, diffedFields, prevValues)
 		if err != nil {
 			return ret, err
 		}
+		fmt.Println("Found data:", data)
+		prevValues = data
 
-		ret = append(ret, data)
+		ret = append(ret, schema.Hydrate(data))
 	}
 
 	return ret, nil

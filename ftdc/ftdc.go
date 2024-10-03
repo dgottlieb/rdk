@@ -1,6 +1,7 @@
 package ftdc
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -48,6 +49,9 @@ type FTDC struct {
 
 	outputWorkerDone chan struct{}
 	logger           logging.Logger
+
+	inmemBuffer  *bytes.Buffer
+	outputWriter io.Writer
 }
 
 func New(logger logging.Logger) *FTDC {
@@ -208,21 +212,23 @@ func (ftdc *FTDC) newDatum(datum Datum) error {
 			ftdc.logger.Warnw("FTDC failed to open file", "err", err)
 			return err
 		}
+		ftdc.inmemBuffer = bytes.NewBuffer(nil)
+		ftdc.outputWriter = io.MultiWriter(ftdc.currOutputFile, ftdc.inmemBuffer)
 	}
-	outputFile := ftdc.currOutputFile
+	outputFile := ftdc.outputWriter
 
 	if datum.generationId != ftdc.outputGenerationId {
 		ftdc.currSchema = getSchema(datum.Data)
 		writeSchema(ftdc.currSchema, outputFile)
 		data := flatten(datum, ftdc.currSchema.mapOrder)
-		writeDatum(nil, data, outputFile)
+		writeDatum(nil, data, outputFile, ftdc)
 		ftdc.prevFlatData = data
 		ftdc.outputGenerationId = datum.generationId
 		return nil
 	}
 
 	data := flatten(datum, ftdc.currSchema.mapOrder)
-	writeDatum(ftdc.prevFlatData, data, outputFile)
+	writeDatum(ftdc.prevFlatData, data, outputFile, ftdc)
 	ftdc.prevFlatData = data
 	return nil
 }
