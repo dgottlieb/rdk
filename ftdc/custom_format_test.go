@@ -57,7 +57,7 @@ func TestREPL(t *testing.T) {
 
 	flatten1 := flatten(datum, schema.mapOrder)
 	fmt.Println("Flatten:", flatten1)
-	writeDatum(nil, flatten1, testFile, nil)
+	writeDatum(0, nil, flatten1, testFile, nil)
 
 	datum2 := Datum{
 		Time: time.Now().Unix(),
@@ -69,7 +69,7 @@ func TestREPL(t *testing.T) {
 	}
 
 	flatten2 := flatten(datum2, schema.mapOrder)
-	writeDatum(flatten1, flatten2, testFile, nil)
+	writeDatum(0, flatten1, flatten2, testFile, nil)
 
 }
 

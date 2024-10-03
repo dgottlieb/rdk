@@ -221,14 +221,14 @@ func (ftdc *FTDC) newDatum(datum Datum) error {
 		ftdc.currSchema = getSchema(datum.Data)
 		writeSchema(ftdc.currSchema, outputFile)
 		data := flatten(datum, ftdc.currSchema.mapOrder)
-		writeDatum(nil, data, outputFile, ftdc)
+		writeDatum(datum.Time, nil, data, outputFile, ftdc)
 		ftdc.prevFlatData = data
 		ftdc.outputGenerationId = datum.generationId
 		return nil
 	}
 
 	data := flatten(datum, ftdc.currSchema.mapOrder)
-	writeDatum(ftdc.prevFlatData, data, outputFile, ftdc)
+	writeDatum(datum.Time, ftdc.prevFlatData, data, outputFile, ftdc)
 	ftdc.prevFlatData = data
 	return nil
 }

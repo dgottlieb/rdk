@@ -81,13 +81,13 @@ func flatten(datum Datum, mapOrder []string) []float32 {
 	return ret
 }
 
-func writeDatum(prev, curr []float32, output io.Writer, ftdc *FTDC) {
+func writeDatum(time int64, prev, curr []float32, output io.Writer, ftdc *FTDC) {
 	numPts := len(curr)
 	if numPts == 0 {
 		panic("No points?")
 	}
 
-	fmt.Println("WriteDatum:", prev, curr)
+	fmt.Println("WriteDatum. Prev:", prev, "Curr:", curr, "Time:", time)
 	if len(prev) != 0 && numPts != len(prev) {
 		panic(fmt.Sprintf("Bad input sizes. Prev: %v Curr: %v", len(prev), len(curr)))
 	}
@@ -146,6 +146,9 @@ func writeDatum(prev, curr []float32, output io.Writer, ftdc *FTDC) {
 		}
 	}
 	fmt.Println()
+
+	// Write time between diff bits and values.
+	binary.Write(output, binary.BigEndian, time)
 
 	// Write out values for metrics that changed across reading.
 	for idx, diff := range diffs {
@@ -300,8 +303,8 @@ func (schema *Schema) Hydrate(data []float32) map[string]any {
 	return ret
 }
 
-func parse(rawReader io.Reader) ([]map[string]any, error) {
-	ret := make([]map[string]any, 0)
+func parse(rawReader io.Reader) ([]Datum, error) {
+	ret := make([]Datum, 0)
 
 	var prevValues []float32
 	// bufio's Reader allows for peeking and potentially better control over how much data to read
@@ -332,6 +335,8 @@ func parse(rawReader io.Reader) ([]map[string]any, error) {
 		}
 
 		diffedFields := readDiffBits(reader, schema)
+		var dataTime int64
+		binary.Read(reader, binary.BigEndian, &dataTime)
 		fmt.Println("DiffedFields:", diffedFields, "Mapped:", schema.MapToNames(diffedFields))
 		data, err := readData(reader, schema, diffedFields, prevValues)
 		if err != nil {
@@ -340,7 +345,10 @@ func parse(rawReader io.Reader) ([]map[string]any, error) {
 		fmt.Println("Found data:", data)
 		prevValues = data
 
-		ret = append(ret, schema.Hydrate(data))
+		ret = append(ret, Datum{
+			Time: dataTime,
+			Data: schema.Hydrate(data),
+		})
 	}
 
 	return ret, nil
