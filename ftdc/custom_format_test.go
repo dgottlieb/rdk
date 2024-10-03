@@ -83,7 +83,7 @@ func TestCustomFormat(t *testing.T) {
 	logger := logging.NewTestLogger(t)
 	ftdc := NewWithOutputFormat(logger, "custom")
 
-	debug := true
+	debug := false
 	if debug {
 		datum := Datum{
 			Time: 0,
@@ -145,4 +145,8 @@ func TestCustomFormat(t *testing.T) {
 	//  	}
 	// }
 	// fmt.Println()
+}
+
+func TestReflection(t *testing.T) {
+	fmt.Println("Fields:", getFieldsForItem(&Basic{100}))
 }

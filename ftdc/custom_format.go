@@ -15,6 +15,20 @@ type Schema struct {
 	fields   []string
 }
 
+func getFieldsForItem(item any) []string {
+	var fields []string
+	rType := reflect.TypeOf(item)
+	if val := reflect.ValueOf(item); val.Kind() == reflect.Pointer {
+		rType = val.Elem().Type()
+	}
+
+	for memberIdx := 0; memberIdx < rType.NumField(); memberIdx++ {
+		fields = append(fields, rType.Field(memberIdx).Name)
+	}
+
+	return fields
+}
+
 func getSchema(data map[string]any) *Schema {
 	var mapOrder []string
 	for key, _ := range data {
@@ -24,13 +38,8 @@ func getSchema(data map[string]any) *Schema {
 	var fields []string
 	for _, key := range mapOrder {
 		stats := data[key]
-		rType := reflect.TypeOf(stats)
-		if val := reflect.ValueOf(stats); val.Kind() == reflect.Pointer {
-			rType = reflect.TypeOf(val.Elem())
-		}
-
-		for memberIdx := 0; memberIdx < rType.NumField(); memberIdx++ {
-			fields = append(fields, fmt.Sprintf("%v.%v", key, rType.Field(memberIdx).Name))
+		for _, field := range getFieldsForItem(stats) {
+			fields = append(fields, fmt.Sprintf("%v.%v", key, field))
 		}
 	}
 
@@ -139,9 +148,10 @@ func writeDatum(prev, curr []float32, output io.Writer, ftdc *FTDC) {
 	fmt.Println()
 
 	// Write out values for metrics that changed across reading.
-	for _, diff := range diffs {
+	for idx, diff := range diffs {
+		fmt.Println("Writing value:", idx, "Diff:", diff)
 		if diff > 1e-9 {
-			binary.Write(output, binary.BigEndian, diff)
+			binary.Write(output, binary.BigEndian, curr[idx])
 		}
 	}
 	fmt.Println("PostDiff:", ftdc.inmemBuffer.Bytes())
