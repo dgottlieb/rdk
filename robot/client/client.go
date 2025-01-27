@@ -16,6 +16,7 @@ import (
 	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
 	"github.com/jhump/protoreflect/desc"
 	"github.com/jhump/protoreflect/grpcreflect"
+	"github.com/viamrobotics/webrtc/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -84,6 +85,7 @@ type RobotClient struct {
 	changeChan               chan bool
 	notifyParent             func()
 	conn                     grpc.ReconfigurableClientConn
+	pc                       *webrtc.PeerConnection
 	client                   pb.RobotServiceClient
 	refClient                *grpcreflect.Client
 	connected                atomic.Bool
@@ -182,7 +184,7 @@ func (rc *RobotClient) handleUnaryDisconnect(
 	}
 
 	if err := rc.checkConnected(); err != nil {
-		rc.Logger().CDebugw(ctx, "connection is down, skipping method call", "method", method)
+		rc.logger.CDebugw(ctx, "connection is down, skipping method call", "method", method)
 		return status.Error(codes.Unavailable, err.Error())
 	}
 
@@ -228,7 +230,7 @@ func (rc *RobotClient) handleStreamDisconnect(
 	}
 
 	if err := rc.checkConnected(); err != nil {
-		rc.Logger().CDebugw(ctx, "connection is down, skipping method call", "method", method)
+		rc.logger.CDebugw(ctx, "connection is down, skipping method call", "method", method)
 		return nil, status.Error(codes.Unavailable, err.Error())
 	}
 
@@ -245,6 +247,7 @@ func (rc *RobotClient) handleStreamDisconnect(
 // context can be used to cancel the operation.
 func New(ctx context.Context, address string, clientLogger logging.ZapCompatibleLogger, opts ...RobotClientOption) (*RobotClient, error) {
 	logger := logging.FromZapCompatible(clientLogger)
+	fmt.Printf("DBGLogger. PreZap: %T Post: %T\n", clientLogger, logger)
 	var rOpts robotClientOpts
 
 	for _, opt := range opts {
@@ -289,6 +292,11 @@ func New(ctx context.Context, address string, clientLogger logging.ZapCompatible
 		rpc.WithUnaryClientInterceptor(unaryClientInterceptor()),
 		rpc.WithStreamClientInterceptor(streamClientInterceptor()),
 	)
+
+	if rOpts.modName != "" {
+		inter := &logging.ModInterceptors{ModName: rOpts.modName}
+		rc.dialOptions = append(rc.dialOptions, rpc.WithUnaryClientInterceptor(inter.UnaryClientInterceptor))
+	}
 
 	if err := rc.Connect(ctx); err != nil {
 		return nil, err
@@ -400,15 +408,30 @@ func (rc *RobotClient) Changed() <-chan bool {
 	return rc.changeChan
 }
 
+func (rc *RobotClient) SetPeerConnection(pc *webrtc.PeerConnection) {
+	rc.mu.Lock()
+	rc.pc = pc
+	rc.mu.Unlock()
+}
+
+func (rc *RobotClient) getClientConn() rpc.ClientConn {
+	// Must be called with `rc.mu` in ReadLock+ mode.
+	if rc.pc == nil {
+		return &rc.conn
+	}
+
+	return grpc.NewSharedConn(&rc.conn, rc.pc, rc.logger.Sublogger("shared_conn"))
+}
+
 // Connect will close any existing connection and try to reconnect to the remote.
 func (rc *RobotClient) Connect(ctx context.Context) error {
 	if err := rc.connectWithLock(ctx); err != nil {
 		return err
 	}
-	rc.Logger().CInfow(ctx, "successfully (re)connected to remote at address", "address", rc.address)
+	rc.logger.CInfow(ctx, "successfully (re)connected to remote at address", "address", rc.address)
 	if rc.notifyParent != nil {
 		rc.notifyParent()
-		rc.Logger().CDebugw(ctx, "successfully notified parent after (re)connection", "address", rc.address)
+		rc.logger.CDebugw(ctx, "successfully notified parent after (re)connection", "address", rc.address)
 	}
 	return nil
 }
@@ -429,8 +452,10 @@ func (rc *RobotClient) connectWithLock(ctx context.Context) error {
 	dialOptionsWebRTCOnly[0] = rpc.WithDisableDirectGRPC()
 
 	dialLogger := rc.logger.Sublogger("networking")
+	rc.logger.Infof("dialing: %s", rc.address)
 	conn, err := grpc.Dial(ctx, rc.address, dialLogger, dialOptionsWebRTCOnly...)
 	if err == nil {
+		rc.logger.Infof("webrtc connection succeeded %s", rc.address)
 		// If we succeed with a webrtc connection, flip the `serverIsWebrtcEnabled` to force all future
 		// connections to use webrtc.
 		if !rc.serverIsWebrtcEnabled {
@@ -439,6 +464,7 @@ func (rc *RobotClient) connectWithLock(ctx context.Context) error {
 			rc.serverIsWebrtcEnabled = true
 		}
 	} else if !rc.serverIsWebrtcEnabled {
+		rc.logger.Infof("!rc.serverIsWebrtcEnabled and first connection didn't succeed: %s", rc.address)
 		// If we failed to connect via webrtc and* we've never previously connected over webrtc, try
 		// to connect with a grpc over a tcp connection.
 		//
@@ -455,6 +481,7 @@ func (rc *RobotClient) connectWithLock(ctx context.Context) error {
 
 		grpcConn, grpcErr := grpc.Dial(ctx, rc.address, dialLogger, dialOptionsGRPCOnly...)
 		if grpcErr == nil {
+			rc.logger.Infof("!rc.serverIsWebrtcEnabled succeeded: %s", rc.address)
 			conn = grpcConn
 			err = nil
 		} else {
@@ -497,7 +524,7 @@ func (rc *RobotClient) updateResourceClients(ctx context.Context) error {
 		if !activeResources[resourceName] {
 			rc.logger.Infow("Removing resource from remote client", "resourceName", resourceName)
 			if err := client.Close(ctx); err != nil {
-				rc.Logger().CError(ctx, err)
+				rc.logger.CError(ctx, err)
 				continue
 			}
 			delete(rc.resourceClients, resourceName)
@@ -525,9 +552,9 @@ func (rc *RobotClient) checkConnection(ctx context.Context, checkEvery, reconnec
 			return
 		}
 		if !rc.connected.Load() {
-			rc.Logger().CInfow(ctx, "trying to reconnect to remote at address", "address", rc.address)
+			rc.logger.CInfow(ctx, "trying to reconnect to remote at address", "address", rc.address)
 			if err := rc.Connect(ctx); err != nil {
-				rc.Logger().CErrorw(ctx, "failed to reconnect remote", "error", err, "address", rc.address)
+				rc.logger.CErrorw(ctx, "failed to reconnect remote", "error", err, "address", rc.address)
 				continue
 			}
 		} else {
@@ -558,7 +585,7 @@ func (rc *RobotClient) checkConnection(ctx context.Context, checkEvery, reconnec
 				break
 			}
 			if outerError != nil {
-				rc.Logger().CErrorw(ctx,
+				rc.logger.CErrorw(ctx,
 					"lost connection to remote",
 					"error", outerError,
 					"address", rc.address,
@@ -572,7 +599,7 @@ func (rc *RobotClient) checkConnection(ctx context.Context, checkEvery, reconnec
 
 				var notifyParentFn func()
 				if rc.notifyParent != nil {
-					rc.Logger().CDebugf(ctx, "connection was lost for remote %q", rc.address)
+					rc.logger.CDebugf(ctx, "connection was lost for remote %q", rc.address)
 					// RSDK-3670: This callback may ultimately acquire the `robotClient.mu`
 					// mutex. Execute the function after releasing the mutex.
 					notifyParentFn = rc.notifyParent
@@ -621,7 +648,7 @@ func (rc *RobotClient) RefreshEvery(ctx context.Context, every time.Duration) {
 		if err := rc.Refresh(ctx); err != nil {
 			// we want to keep refreshing and hopefully the ticker is not
 			// too fast so that we do not thrash.
-			rc.Logger().CErrorw(ctx, "failed to refresh resources from remote", "error", err)
+			rc.logger.CErrorw(ctx, "failed to refresh resources from remote", "error", err)
 		}
 	}
 }
@@ -674,10 +701,10 @@ func (rc *RobotClient) ResourceByName(name resource.Name) (resource.Resource, er
 func (rc *RobotClient) createClient(name resource.Name) (resource.Resource, error) {
 	apiInfo, ok := resource.LookupGenericAPIRegistration(name.API)
 	if !ok || apiInfo.RPCClient == nil {
-		return grpc.NewForeignResource(name, &rc.conn), nil
+		return grpc.NewForeignResource(name, rc.getClientConn()), nil
 	}
-	logger := rc.Logger().Sublogger(resource.RemoveRemoteName(name).ShortName())
-	return apiInfo.RPCClient(rc.backgroundCtx, &rc.conn, rc.remoteName, name, logger)
+	logger := rc.logger.Sublogger(resource.RemoveRemoteName(name).ShortName())
+	return apiInfo.RPCClient(rc.backgroundCtx, rc.getClientConn(), rc.remoteName, name, logger)
 }
 
 func (rc *RobotClient) resources(ctx context.Context) ([]resource.Name, []resource.RPCAPI, error) {
@@ -723,7 +750,7 @@ func (rc *RobotClient) resources(ctx context.Context) ([]resource.Name, []resour
 				// has a remote. This can be solved by either integrating reflection into
 				// robot.proto or by overriding the gRPC reflection service to return
 				// reflection results from its remotes.
-				rc.Logger().CDebugw(ctx, "failed to find symbol for resource API", "api", resAPI, "error", err)
+				rc.logger.CDebugw(ctx, "failed to find symbol for resource API", "api", resAPI, "error", err)
 				continue
 			}
 			svcDesc, ok := symDesc.(*desc.ServiceDescriptor)
@@ -777,7 +804,7 @@ func (rc *RobotClient) updateRemoteNameMap() {
 	dupMap := make(map[resource.Name]bool)
 	for _, n := range rc.resourceNames {
 		if err := n.Validate(); err != nil {
-			rc.Logger().Error(err)
+			rc.logger.Error(err)
 			continue
 		}
 		tempName := resource.RemoveRemoteName(n)
@@ -826,7 +853,7 @@ func (rc *RobotClient) PackageManager() packages.Manager {
 //	resource_names := machine.ResourceNames()
 func (rc *RobotClient) ResourceNames() []resource.Name {
 	if err := rc.checkConnected(); err != nil {
-		rc.Logger().Errorw("failed to get remote resource names", "error", err.Error())
+		rc.logger.Errorw("failed to get remote resource names", "error", err.Error())
 		return nil
 	}
 	rc.mu.RLock()
@@ -839,7 +866,7 @@ func (rc *RobotClient) ResourceNames() []resource.Name {
 // ResourceRPCAPIs returns a list of all known resource APIs.
 func (rc *RobotClient) ResourceRPCAPIs() []resource.RPCAPI {
 	if err := rc.checkConnected(); err != nil {
-		rc.Logger().Errorw("failed to get remote resource types", "error", err)
+		rc.logger.Errorw("failed to get remote resource types", "error", err)
 		return nil
 	}
 	rc.mu.RLock()
@@ -992,7 +1019,7 @@ func (rc *RobotClient) TransformPointCloud(ctx context.Context, srcpc pointcloud
 		return nil, err
 	}
 	transformPose := referenceframe.ProtobufToPoseInFrame(resp.Pose).Pose()
-	return pointcloud.ApplyOffset(ctx, srcpc, transformPose, rc.Logger())
+	return pointcloud.ApplyOffset(ctx, srcpc, transformPose, rc.logger)
 }
 
 // StopAll cancels all current and outstanding operations for the machine and stops all actuators and movement.
@@ -1003,7 +1030,7 @@ func (rc *RobotClient) StopAll(ctx context.Context, extra map[resource.Name]map[
 	for name, params := range extra {
 		param, err := protoutils.StructToStructPb(params)
 		if err != nil {
-			rc.Logger().CWarnf(ctx, "failed to convert extra params for resource %s with error: %s", name.Name, err)
+			rc.logger.CWarnf(ctx, "failed to convert extra params for resource %s with error: %s", name.Name, err)
 			continue
 		}
 		p := &pb.StopExtraParameters{
@@ -1090,10 +1117,10 @@ func (rc *RobotClient) Shutdown(ctx context.Context) error {
 			case codes.Internal, codes.Unknown:
 				break
 			case codes.Unavailable:
-				rc.Logger().CWarnw(ctx, "server unavailable, likely due to successful robot shutdown")
+				rc.logger.CWarnw(ctx, "server unavailable, likely due to successful robot shutdown")
 				return err
 			case codes.DeadlineExceeded:
-				rc.Logger().CWarnw(ctx, "request timeout, robot shutdown may still be successful")
+				rc.logger.CWarnw(ctx, "request timeout, robot shutdown may still be successful")
 				return err
 			default:
 				return err
@@ -1102,7 +1129,7 @@ func (rc *RobotClient) Shutdown(ctx context.Context) error {
 			return err
 		}
 	}
-	rc.Logger().CDebug(ctx, "robot shutdown successful")
+	rc.logger.CDebug(ctx, "robot shutdown successful")
 	return nil
 }
 

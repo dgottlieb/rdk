@@ -43,6 +43,16 @@ import (
 	rutils "go.viam.com/rdk/utils"
 )
 
+var modName string
+
+func init() {
+	if strings.Contains(os.Args[0], "modmain") {
+		modName = "modmain"
+	} else {
+		modName = "viamrtsp"
+	}
+}
+
 const (
 	socketSuffix = ".sock"
 	// socketHashSuffixLength determines how many characters from the module's name's hash should be used when truncating the module socket.
@@ -247,6 +257,7 @@ func NewModule(ctx context.Context, address string, logger logging.Logger) (*Mod
 
 	// attempt to construct a PeerConnection
 	pc, err := rgrpc.NewLocalPeerConnection(logger)
+	logger.Infof("Module webrtc connection: %p", pc)
 	if err != nil {
 		logger.Debugw("Unable to create optional peer connection for module. Skipping WebRTC for module...", "err", err)
 		return m, nil
@@ -363,18 +374,15 @@ func (m *Module) connectParent(ctx context.Context) error {
 		fullAddr = "unix://" + m.parentAddr
 	}
 
-	// moduleLoggers may be creating the client connection below, so use a
-	// different logger here to avoid a deadlock where the client connection
-	// tries to recursively connect to the parent.
-	clientLogger := logging.NewLogger("networking.module-connection")
-	clientLogger.SetLevel(m.logger.GetLevel())
-	// TODO(PRODUCT-343): add session support to modules
-	rc, err := client.New(ctx, fullAddr, clientLogger, client.WithDisableSessions())
+	rc, err := client.New(ctx, fullAddr, m.logger, client.WithDisableSessions(), client.WithModName(modName))
 	if err != nil {
 		return err
 	}
 
 	m.parent = rc
+	if m.pc != nil {
+		m.parent.SetPeerConnection(m.pc)
+	}
 	return nil
 }
 
@@ -828,6 +836,7 @@ func (m *Module) ListStreams(ctx context.Context, req *streampb.ListStreamsReque
 // 6. A webrtc track is unable to be created
 // 7. Adding the track to the peer connection fails.
 func (m *Module) AddStream(ctx context.Context, req *streampb.AddStreamRequest) (*streampb.AddStreamResponse, error) {
+	m.logger.Infof("AddStream called. Requested: %v", req.GetName())
 	ctx, span := trace.StartSpan(ctx, "module::module::AddStream")
 	defer span.End()
 	name, err := resource.NewFromString(req.GetName())
@@ -842,12 +851,12 @@ func (m *Module) AddStream(ctx context.Context, req *streampb.AddStreamRequest) 
 	vcss, ok := m.streamSourceByName[name]
 	if !ok {
 		err := errors.New("unknown stream for resource")
-		m.logger.CWarnw(ctx, err.Error(), "name", name, "streamSourceByName", fmt.Sprintf("%#v", m.streamSourceByName))
+		m.logger.CWarnw(ctx, err.Error(), "name", name.String(), "streamSourceByName", fmt.Sprintf("%#v", m.streamSourceByName))
 		return nil, err
 	}
 
 	if _, ok = m.activeResourceStreams[name]; ok {
-		m.logger.CWarnw(ctx, "AddStream called with when there is already a stream for peer connection. NoOp", "name", name)
+		m.logger.CWarnw(ctx, "AddStream called with when there is already a stream for peer connection. NoOp", "name", name.String())
 		return &streampb.AddStreamResponse{}, nil
 	}
 
@@ -861,6 +870,7 @@ func (m *Module) AddStream(ctx context.Context, req *streampb.AddStreamRequest) 
 	}
 
 	sub, err := vcss.SubscribeRTP(ctx, rtpBufferSize, func(pkts []*rtp.Packet) {
+		m.logger.Info("Writing packets: ", len(pkts))
 		for _, pkt := range pkts {
 			if err := tlsRTP.WriteRTP(pkt); err != nil {
 				m.logger.CWarnw(ctx, "SubscribeRTP callback function WriteRTP", "err", err)
@@ -871,7 +881,7 @@ func (m *Module) AddStream(ctx context.Context, req *streampb.AddStreamRequest) 
 		return nil, errors.Wrap(err, "error setting up stream subscription")
 	}
 
-	m.logger.CDebugw(ctx, "AddStream calling AddTrack", "name", name, "subID", sub.ID.String())
+	m.logger.CDebugw(ctx, "AddStream calling AddTrack", "name", name.String(), "subID", sub.ID.String())
 	sender, err := m.pc.AddTrack(tlsRTP)
 	if err != nil {
 		err = errors.Wrap(err, "error adding track")
@@ -882,7 +892,7 @@ func (m *Module) AddStream(ctx context.Context, req *streampb.AddStreamRequest) 
 	}
 
 	removeTrackOnSubTerminate := func() {
-		defer m.logger.Debugw("RemoveTrack called on ", "name", name, "subID", sub.ID.String())
+		defer m.logger.Debugw("RemoveTrack called on ", "name", name.String(), "subID", sub.ID.String())
 		// wait until either the module is shutting down, or the subscription terminates
 		var msg string
 		select {
@@ -894,16 +904,17 @@ func (m *Module) AddStream(ctx context.Context, req *streampb.AddStreamRequest) 
 		// remove the track from the peer connection so that viam-server clients know that the stream has terminated
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		m.logger.Debugw(msg, "name", name, "subID", sub.ID.String())
+		m.logger.Debugw(msg, "name", name.String(), "subID", sub.ID.String())
 		delete(m.activeResourceStreams, name)
 		if err := m.pc.RemoveTrack(sender); err != nil {
-			m.logger.Warnf("RemoveTrack returned error", "name", name, "subID", sub.ID.String(), "err", err)
+			m.logger.Warnf("RemoveTrack returned error", "name", name.String(), "subID", sub.ID.String(), "err", err)
 		}
 	}
 	m.activeBackgroundWorkers.Add(1)
 	utils.ManagedGo(removeTrackOnSubTerminate, m.activeBackgroundWorkers.Done)
 
 	m.activeResourceStreams[name] = peerResourceState{subID: sub.ID}
+	m.logger.Info("Returning AddStream OK for: ", req.GetName())
 	return &streampb.AddStreamResponse{}, nil
 }
 
@@ -931,7 +942,7 @@ func (m *Module) RemoveStream(ctx context.Context, req *streampb.RemoveStreamReq
 	}
 
 	if err := vcss.Unsubscribe(ctx, prs.subID); err != nil {
-		m.logger.CWarnw(ctx, "RemoveStream > Unsubscribe", "name", name, "subID", prs.subID.String(), "err", err)
+		m.logger.CWarnw(ctx, "RemoveStream > Unsubscribe", "name", name.String(), "subID", prs.subID.String(), "err", err)
 		return nil, err
 	}
 

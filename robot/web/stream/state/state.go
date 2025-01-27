@@ -357,6 +357,7 @@ func (state *StreamState) streamH264Passthrough() error {
 
 	cb := func(pkts []*rtp.Packet) {
 		<-releasePackets
+		state.logger.Infof("Write RTP packets: %v", len(pkts))
 		for _, pkt := range pkts {
 			// Also, look at unsubscribe error logs. Definitely a bug. Probably benign.
 			if count.Add(1)%10000 == 0 {

@@ -51,7 +51,7 @@ type Server struct {
 	closedCtx context.Context
 	closedFn  context.CancelFunc
 
-	mu                      sync.RWMutex
+	mapAccess               sync.RWMutex
 	nameToStreamState       map[string]*state.StreamState
 	activePeerStreams       map[*webrtc.PeerConnection]map[string]*peerState
 	activeBackgroundWorkers sync.WaitGroup
@@ -104,8 +104,8 @@ func (e *StreamAlreadyRegisteredError) Error() string {
 
 // NewStream informs the stream server of new streams that are capable of being streamed.
 func (server *Server) NewStream(config gostream.StreamConfig) (gostream.Stream, error) {
-	server.mu.Lock()
-	defer server.mu.Unlock()
+	server.mapAccess.Lock()
+	defer server.mapAccess.Unlock()
 
 	if _, ok := server.nameToStreamState[config.Name]; ok {
 		return nil, &StreamAlreadyRegisteredError{config.Name}
@@ -127,8 +127,8 @@ func (server *Server) NewStream(config gostream.StreamConfig) (gostream.Stream, 
 func (server *Server) ListStreams(ctx context.Context, req *streampb.ListStreamsRequest) (*streampb.ListStreamsResponse, error) {
 	_, span := trace.StartSpan(ctx, "stream::server::ListStreams")
 	defer span.End()
-	server.mu.RLock()
-	defer server.mu.RUnlock()
+	server.mapAccess.RLock()
+	defer server.mapAccess.RUnlock()
 
 	names := make([]string, 0, len(server.nameToStreamState))
 	for name := range server.nameToStreamState {
@@ -143,16 +143,14 @@ func (server *Server) AddStream(ctx context.Context, req *streampb.AddStreamRequ
 	defer span.End()
 	// Get the peer connection to the caller.
 	pc, ok := rpc.ContextPeerConnection(ctx)
-	server.logger.Infow("Adding video stream", "name", req.Name, "peerConn", pc)
+	server.logger.Infow("AddStream start", "name", req.Name, "peerConn", fmt.Sprintf("%p", pc), "ok?", ok)
 	defer server.logger.Warnf("AddStream END %s", req.Name)
 
 	if !ok {
 		return nil, errors.New("can only add a stream over a WebRTC based connection")
 	}
 
-	server.mu.Lock()
-	defer server.mu.Unlock()
-
+	server.mapAccess.Lock()
 	streamStateToAdd, ok := server.nameToStreamState[req.Name]
 
 	// return error if the stream name is not registered
@@ -166,8 +164,10 @@ func (server *Server) AddStream(ctx context.Context, req *streampb.AddStreamRequ
 		}
 		err := fmt.Errorf("no stream for %q, available streams: %s", req.Name, availableStreams)
 		server.logger.Error(err.Error())
+		server.mapAccess.Unlock()
 		return nil, err
 	}
+	server.mapAccess.Unlock()
 
 	// return error if resource is neither a camera nor audioinput
 	_, isCamErr := camerautils.Camera(server.robot, streamStateToAdd.Stream)
@@ -177,12 +177,16 @@ func (server *Server) AddStream(ctx context.Context, req *streampb.AddStreamRequ
 	}
 
 	// return error if the caller's peer connection is already being sent stream data
+	server.mapAccess.Lock()
 	if _, ok := server.activePeerStreams[pc][req.Name]; ok {
 		err := errors.New("stream already active")
 		server.logger.Error(err.Error())
+		server.mapAccess.Unlock()
 		return nil, err
 	}
 	nameToPeerState, ok := server.activePeerStreams[pc]
+	server.mapAccess.Unlock()
+
 	// if there is no active video data being sent, set up a callback to remove the peer connection from
 	// the active streams & stop the stream from doing h264 encode if this is the last peer connection
 	// subcribed to the camera's video feed
@@ -196,9 +200,6 @@ func (server *Server) AddStream(ctx context.Context, req *streampb.AddStreamRequ
 			case webrtc.PeerConnectionStateDisconnected,
 				webrtc.PeerConnectionStateFailed,
 				webrtc.PeerConnectionStateClosed:
-
-				server.mu.Lock()
-				defer server.mu.Unlock()
 
 				if server.isAlive {
 					// Dan: This conditional closing on `isAlive` is a hack to avoid a data
@@ -214,13 +215,20 @@ func (server *Server) AddStream(ctx context.Context, req *streampb.AddStreamRequ
 					server.activeBackgroundWorkers.Add(1)
 					utils.PanicCapturingGo(func() {
 						defer server.activeBackgroundWorkers.Done()
-						server.mu.Lock()
-						defer server.mu.Unlock()
+
+						server.mapAccess.Lock()
+						statesToClose := make([]*state.StreamState, len(server.activePeerStreams))
 						defer delete(server.activePeerStreams, pc)
 						var errs error
 						for _, ps := range server.activePeerStreams[pc] {
-							errs = multierr.Combine(errs, ps.streamState.Decrement())
+							statesToClose = append(statesToClose, ps.streamState)
 						}
+						server.mapAccess.Unlock()
+
+						for _, state := range statesToClose {
+							errs = multierr.Combine(errs, state.Decrement())
+						}
+
 						// We don't want to log this if the streamState was closed (as it only happens if viam-server is terminating)
 						if errs != nil && !errors.Is(errs, state.ErrClosed) {
 							server.logger.Errorw("error(s) stopping the streamState", "errs", errs)
@@ -235,7 +243,9 @@ func (server *Server) AddStream(ctx context.Context, req *streampb.AddStreamRequ
 				return
 			}
 		})
+		server.mapAccess.Lock()
 		server.activePeerStreams[pc] = nameToPeerState
+		server.mapAccess.Unlock()
 	}
 
 	ps, ok := nameToPeerState[req.Name]
@@ -263,6 +273,7 @@ func (server *Server) AddStream(ctx context.Context, req *streampb.AddStreamRequ
 
 	// if the stream supports video, add the video track
 	if trackLocal, haveTrackLocal := streamStateToAdd.Stream.VideoTrackLocal(); haveTrackLocal {
+		server.logger.Infof("Adding video track. Name: %v", req.GetName())
 		if err := addTrack(trackLocal); err != nil {
 			server.logger.Error(err.Error())
 			return nil, err
@@ -281,6 +292,7 @@ func (server *Server) AddStream(ctx context.Context, req *streampb.AddStreamRequ
 	}
 
 	guard.Success()
+	server.logger.Warnf("AddStream END SUCCESS %s", req.Name)
 	return &streampb.AddStreamResponse{}, nil
 }
 
@@ -294,10 +306,10 @@ func (server *Server) RemoveStream(ctx context.Context, req *streampb.RemoveStre
 		return nil, errors.New("can only remove a stream over a WebRTC based connection")
 	}
 
-	server.mu.Lock()
-	defer server.mu.Unlock()
-
+	server.mapAccess.Lock()
 	streamToRemove, ok := server.nameToStreamState[req.Name]
+	server.mapAccess.Unlock()
+
 	// Callers of RemoveStream will continue calling RemoveStream until it succeeds. Retrying on the
 	// following "stream not found" errors is not helpful in this goal. Thus we return a success
 	// response.
@@ -313,7 +325,9 @@ func (server *Server) RemoveStream(ctx context.Context, req *streampb.RemoveStre
 		return &streampb.RemoveStreamResponse{}, nil
 	}
 
+	server.mapAccess.Lock()
 	if _, ok := server.activePeerStreams[pc][req.Name]; !ok {
+		server.mapAccess.Unlock()
 		return &streampb.RemoveStreamResponse{}, nil
 	}
 
@@ -322,16 +336,19 @@ func (server *Server) RemoveStream(ctx context.Context, req *streampb.RemoveStre
 		errs = multierr.Combine(errs, pc.RemoveTrack(sender))
 	}
 	if errs != nil {
-		server.logger.Error(errs.Error())
-		return nil, errs
+		server.logger.Warnw("RemoveTrack errors", "errs", errs)
 	}
+
+	server.mapAccess.Unlock()
 
 	if err := streamToRemove.Decrement(); err != nil {
 		server.logger.Error(err.Error())
 		return nil, err
 	}
 
+	server.mapAccess.Lock()
 	delete(server.activePeerStreams[pc], req.Name)
+	server.mapAccess.Unlock()
 	return &streampb.RemoveStreamResponse{}, nil
 }
 
@@ -388,8 +405,8 @@ func (server *Server) SetStreamOptions(
 	if err != nil {
 		return nil, err
 	}
-	server.mu.Lock()
-	defer server.mu.Unlock()
+	server.mapAccess.Lock()
+	defer server.mapAccess.Unlock()
 	switch cmd {
 	case optionsCommandResize:
 		err = server.resizeVideoSource(req.Name, int(req.Resolution.Width), int(req.Resolution.Height))
@@ -549,7 +566,7 @@ func (server *Server) AddNewStreams(ctx context.Context) error {
 // Close closes the Server and waits for spun off goroutines to complete.
 func (server *Server) Close() error {
 	server.closedFn()
-	server.mu.Lock()
+	server.mapAccess.Lock()
 	server.isAlive = false
 
 	var errs error
@@ -559,7 +576,7 @@ func (server *Server) Close() error {
 	if errs != nil {
 		server.logger.Errorf("Stream Server Close > StreamState.Close() errs: %s", errs)
 	}
-	server.mu.Unlock()
+	server.mapAccess.Unlock()
 	server.activeBackgroundWorkers.Wait()
 	return errs
 }
@@ -592,8 +609,8 @@ func (server *Server) startMonitorCameraAvailable() {
 }
 
 func (server *Server) removeMissingStreams() {
-	server.mu.Lock()
-	defer server.mu.Unlock()
+	server.mapAccess.Lock()
+	defer server.mapAccess.Unlock()
 	for key, streamState := range server.nameToStreamState {
 		// Stream names are slightly modified versions of the resource short name
 		camName := streamState.Stream.Name()

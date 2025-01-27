@@ -18,7 +18,7 @@ import (
 
 var (
 	// Window duration over which to consider log messages "noisy.".
-	noisyMessageWindowDuration = 10 * time.Second
+	noisyMessageWindowDuration = time.Minute
 	// Count threshold within `noisyMessageWindowDuration` after which to
 	// consider log messages "noisy.".
 	noisyMessageCountThreshold = 3
@@ -59,6 +59,12 @@ type (
 	}
 )
 
+var ignoredLogKeys map[string]struct{} = map[string]struct{}{
+	"grpc.time_ms":    struct{}{},
+	"grpc.start_time": struct{}{},
+	"log_ts":          struct{}{},
+}
+
 // HashKey creates a hash key string for a `LogEntry`. Should be used to emplace a log
 // entry in `recentMessageEntries`, i.e. `LogEntry`s that `HashKey` identically should be
 // treated as identical with respect to noisiness and deduplication.
@@ -66,6 +72,9 @@ func (le *LogEntry) HashKey() string {
 	ret := le.Message
 	for _, field := range le.Fields {
 		ret += " " + field.Key + " "
+		if _, exists := ignoredLogKeys[field.Key]; exists {
+			continue
+		}
 
 		// Assume field's value is held in one of `Integer`, `Interface`, or
 		// `String`. Otherwise (field has no value or is equivalent to 0 or "") use

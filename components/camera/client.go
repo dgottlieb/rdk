@@ -84,6 +84,8 @@ func NewClientFromConn(
 	streamClient := streampb.NewStreamServiceClient(conn)
 	trackClosed := make(chan struct{})
 	close(trackClosed)
+	logger.Infof("NICK!!! Me: %v conn: %#v, streamClient: %#v", name.Name, conn, streamClient)
+	// debug.PrintStack()
 	return &client{
 		remoteName:     remoteName,
 		Named:          name.PrependRemote(remoteName).AsNamed(),
@@ -429,10 +431,11 @@ func (c *client) SubscribeRTP(
 		return rtppassthrough.NilSubscription, ErrNoSharedPeerConnection
 	}
 
-	c.logger.CDebugw(ctx, "SubscribeRTP", "subID", sub.ID.String(), "name", c.Name(), "bufAndCBByID", c.bufAndCBToString())
+	c.logger.CInfow(ctx, "Client conn", "connType", fmt.Sprintf("%T", c.conn), "conn", fmt.Sprintf("%#v", c.conn))
+	c.logger.CDebugw(ctx, "SubscribeRTP", "subID", sub.ID.String(), "name", c.Name().String(), "bufAndCBByID", c.bufAndCBToString())
 	defer func() {
 		c.logger.CDebugw(ctx, "SubscribeRTP after", "subID", sub.ID.String(),
-			"name", c.Name(), "bufAndCBByID", c.bufAndCBToString())
+			"name", c.Name().String(), "bufAndCBByID", c.bufAndCBToString())
 	}()
 
 	// If we do not currently have a video stream open for this camera, we create one. Otherwise
@@ -443,7 +446,7 @@ func (c *client) SubscribeRTP(
 	//    the same camera when the remote receives `RemoveStream`, it wouldn't know which to stop
 	//    sending data for.
 	if len(c.runningStreams) == 0 {
-		c.logger.CInfow(ctx, "SubscribeRTP is creating a video track",
+		c.logger.CInfow(ctx, "SubscribeRTP is creating a video track", "resourceName", c.Name().String(), "trackName", c.trackName(),
 			"client", fmt.Sprintf("%p", c), "peerConnection", fmt.Sprintf("%p", c.conn.PeerConn()))
 		// A previous subscriber/track may have exited, but its resources have not necessarily been
 		// cleaned up. We must wait for that to complete. We additionally select on other error
@@ -474,6 +477,8 @@ func (c *client) SubscribeRTP(
 		// Call `AddStream` on the remote. In the successful case, this will result in a
 		// PeerConnection renegotiation to add this camera's video track and have the `OnTrack`
 		// callback invoked.
+		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
 		if _, err := c.streamClient.AddStream(ctx, &streampb.AddStreamRequest{Name: c.trackName()}); err != nil {
 			c.logger.CDebugw(ctx, "SubscribeRTP AddStream hit error", "subID", sub.ID.String(), "trackName", c.trackName(), "err", err)
 			return rtppassthrough.NilSubscription, err
@@ -509,7 +514,7 @@ func (c *client) SubscribeRTP(
 	rtpPacketBuffer.Start()
 	g.Success()
 	c.logger.CDebugw(ctx, "SubscribeRTP succeeded", "subID", sub.ID.String(),
-		"name", c.Name(), "bufAndCBByID", c.bufAndCBToString())
+		"name", c.Name().String(), "bufAndCBByID", c.bufAndCBToString())
 	return sub, nil
 }
 
@@ -521,6 +526,7 @@ func (c *client) addOnTrackFunc(
 	return func(tr *webrtc.TrackRemote, r *webrtc.RTPReceiver) {
 		// Our `OnTrack` was called. Inform `SubscribeRTP` that getting video data was successful.
 		close(trackReceived)
+		c.logger.Info("Closed track")
 		c.activeBackgroundWorkers.Add(1)
 		goutils.ManagedGo(func() {
 			var count atomic.Uint64
@@ -564,8 +570,8 @@ func (c *client) addOnTrackFunc(
 
 				c.rtpPassthroughMu.Lock()
 				for _, tmp := range c.runningStreams {
-					if count.Add(1)%10000 == 0 {
-						c.logger.Debugw("ReadRTP called. Sampling 1/10000", "count", count.Load(), "packetTs", pkt.Header.Timestamp)
+					if count.Add(1)%10 == 0 {
+						c.logger.Infow("ReadRTP called. Sampling 1/10000", "count", count.Load(), "packetTs", pkt.Header.Timestamp)
 					}
 
 					// This is needed to prevent the problem described here:
