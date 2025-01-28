@@ -25,6 +25,10 @@ import (
 // a resource may register with a SharedConn which supports WebRTC.
 type OnTrackCB func(tr *webrtc.TrackRemote, r *webrtc.RTPReceiver)
 
+// nolint
+// The following describes the SharedConn lifetime for viam-server's modmanager communicating with
+// modules it has spawned.
+//
 // SharedConn wraps both a GRPC connection & (optionally) a peer connection & controls access to both.
 // For modules, the grpc connection is over a Unix socket. The WebRTC `PeerConnection` is made
 // separately. The `SharedConn` continues to implement the `rpc.ClientConn` interface by pairing up
@@ -81,6 +85,11 @@ type SharedConn struct {
 	onTrackCBByTrackNameMu sync.Mutex
 	onTrackCBByTrackName   map[string]OnTrackCB
 
+	// isConnectedToViamServer identifies whether this SharedConn is running inside a viam-server
+	// talking to a module, or a module talking to a viam-server. We use this to determine whether
+	// to use long names or short names for PeerConnection video (or audio) track names.
+	isConnectedToViamServer bool
+
 	logger logging.Logger
 
 	Special bool
@@ -120,6 +129,52 @@ func NewSharedConn(grpcConn rpc.ClientConn, peerConn *webrtc.PeerConnection, log
 	})
 
 	return ret
+}
+
+// NewSharedConnForModule acts as a constructor for `SharedConn` for modules that are communicating
+// back to their parent viam-server.
+func NewSharedConnForModule(grpcConn rpc.ClientConn, peerConn *webrtc.PeerConnection, logger logging.Logger) *SharedConn {
+	// We must be passed a ready connection.
+	pcReady := make(chan struct{})
+	close(pcReady)
+
+	ret := &SharedConn{
+		peerConn:      peerConn,
+		peerConnReady: pcReady,
+		// We were passed in a ready connection. Only create this for when `Close` is called.
+		peerConnFailed:          make(chan struct{}),
+		onTrackCBByTrackName:    make(map[string]OnTrackCB),
+		isConnectedToViamServer: true,
+		logger:                  logger,
+	}
+	ret.grpcConn.ReplaceConn(grpcConn)
+
+	ret.peerConn.OnTrack(func(trackRemote *webrtc.TrackRemote, rtpReceiver *webrtc.RTPReceiver) {
+		ret.onTrackCBByTrackNameMu.Lock()
+		onTrackCB, ok := ret.onTrackCBByTrackName[trackRemote.StreamID()]
+		ret.onTrackCBByTrackNameMu.Unlock()
+		if !ok {
+			msg := "Callback not found for StreamID: %s, keys(resOnTrackCBs): %#v"
+			ret.logger.Errorf(msg, trackRemote.StreamID(), maps.Keys(ret.onTrackCBByTrackName))
+			return
+		}
+		onTrackCB(trackRemote, rtpReceiver)
+	})
+
+	return ret
+}
+
+// IsConnectedToModule returns whether this shared conn is being used to communicate with a module.
+func (sc *SharedConn) IsConnectedToModule() bool {
+	return sc.isConnectedToViamServer
+}
+
+// IsConnectedToViamServer returns whether this shared conn is being used to communicate with a
+// viam-server. Note this implies the client is running within a module process. Typical
+// clients/remote connections are a pure webrtc connection. As opposed to a frankenstein tcp/unix
+// socket + webrtc connection.
+func (sc *SharedConn) IsConnectedToViamServer() bool {
+	return !sc.isConnectedToViamServer
 }
 
 // Invoke forwards to the underlying GRPC Connection.
@@ -180,8 +235,8 @@ func (sc *SharedConn) PeerConn() *webrtc.PeerConnection {
 	return ret
 }
 
-// ResetConn acts as a constructor for `SharedConn`. ResetConn replaces the underlying
-// connection objects in addition to some other initialization.
+// ResetConn acts as a constructor for `SharedConn` inside the viam-server (not modules). ResetConn
+// replaces the underlying connection objects in addition to some other initialization.
 //
 // The first call to `ResetConn` is guaranteed to happen before any access to connection objects
 // happens. But subequent calls can be entirely asynchronous to components/services accessing

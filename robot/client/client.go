@@ -114,7 +114,11 @@ type RobotClient struct {
 	// performance would be impacted.
 	serverIsWebrtcEnabled bool
 
-	sharedConn *grpc.SharedConn
+	// If this client is running in a module process and this client represents the gRPC connection
+	// back to a viam-server. If this is true, `pc` and `sharedConn` are expected to be set.
+	isModuleConnection bool
+	pc                 *webrtc.PeerConnection
+	sharedConn         *grpc.SharedConn
 }
 
 // RemoteTypeName is the type name used for a remote. This is for internal use.
@@ -272,6 +276,7 @@ func New(ctx context.Context, address string, clientLogger logging.ZapCompatible
 		sessionsDisabled:    rOpts.disableSessions,
 		heartbeatCtx:        heartbeatCtx,
 		heartbeatCtxCancel:  heartbeatCtxCancel,
+		isModuleConnection:  rOpts.modName != "",
 	}
 
 	// interceptors are applied in order from first to last
@@ -708,7 +713,7 @@ func (rc *RobotClient) createClient(name resource.Name) (resource.Resource, erro
 	if !ok || apiInfo.RPCClient == nil {
 		return grpc.NewForeignResource(name, rc.getClientConn()), nil
 	}
-	logger := rc.logger.Sublogger(resource.RemoveRemoteName(name).ShortName())
+	logger := rc.Logger().Sublogger(resource.RemoveRemoteName(name).ShortName())
 	return apiInfo.RPCClient(rc.backgroundCtx, rc.getClientConn(), rc.remoteName, name, logger)
 }
 
@@ -1215,6 +1220,104 @@ func (rc *RobotClient) Version(ctx context.Context) (robot.VersionResponse, erro
 	mVersion.APIVersion = resp.ApiVersion
 
 	return mVersion, nil
+}
+
+// Tunnel tunnels data to/from the read writer from/to the destination port on the server. This
+// function will close the connection passed in as part of cleanup.
+func (rc *RobotClient) Tunnel(ctx context.Context, conn io.ReadWriteCloser, dest int) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	client, err := rc.client.Tunnel(ctx)
+	if err != nil {
+		return err
+	}
+
+	if err := client.Send(&pb.TunnelRequest{
+		DestinationPort: uint32(dest),
+	}); err != nil {
+		return err
+	}
+	rc.Logger().CInfow(ctx, "creating tunnel to server", "port", dest)
+	var (
+		wg              sync.WaitGroup
+		readerSenderErr error
+
+		timerMu sync.Mutex
+		timer   *time.Timer
+	)
+	connClosed := make(chan struct{})
+	rsDone := make(chan struct{})
+	wg.Add(1)
+	utils.PanicCapturingGo(func() {
+		defer func() {
+			// We communicate an end to the stream by calling CloseSend().
+			// Close the channel first so that network errors can be filtered
+			// and prevented in the RecvWriterLoop.
+			close(rsDone)
+			readerSenderErr = errors.Join(readerSenderErr, client.CloseSend())
+
+			// Schedule a task to cancel the context if we do not exit out of the recvWriterLoop within 5 seconds.
+			// This will close the client, meaning client.Recv() in the RecvWriterLoop will exit and return an error.
+			//
+			// NOTE(cheukt): This may cause DEBUG messages from WebRTC stating `no stream for id; discarding`
+			// to show up because the handler will have exited before we receive the last messages from the server.
+			// This is not an issue and is expected.
+			timerMu.Lock()
+			timer = time.AfterFunc(5*time.Second, cancel)
+			timerMu.Unlock()
+			wg.Done()
+		}()
+		// a max of 32kb will be sent per message (based on io.Copy's default buffer size)
+		sendFunc := func(data []byte) error { return client.Send(&pb.TunnelRequest{Data: data}) }
+		readerSenderErr = tunnel.ReaderSenderLoop(ctx, conn, sendFunc, connClosed, rc.logger.WithFields("loop", "reader/sender"))
+	})
+
+	recvFunc := func() ([]byte, error) {
+		resp, err := client.Recv()
+		if err != nil {
+			return nil, err
+		}
+		return resp.Data, nil
+	}
+	recvWriterErr := tunnel.RecvWriterLoop(ctx, recvFunc, conn, rsDone, rc.logger.WithFields("loop", "recv/writer"))
+	timerMu.Lock()
+	// cancel the timer if we've successfully returned from the RecvWriterLoop
+	if timer != nil {
+		timer.Stop()
+	}
+	timerMu.Unlock()
+
+	// We close the connection to unblock the reader/sender loop, which is not clean
+	// but there isn't a cleaner way to exit from the reader/sender loop.
+	// Close the channel first so that network errors can be filtered
+	// and prevented in the ReaderSenderLoop.
+	close(connClosed)
+	err = conn.Close()
+
+	wg.Wait()
+	rc.Logger().CInfow(ctx, "tunnel to server closed", "port", dest)
+	return errors.Join(err, readerSenderErr, recvWriterErr)
+}
+
+// SetPeerConnection is only to be called internally from modules.
+func (rc *RobotClient) SetPeerConnection(pc *webrtc.PeerConnection) {
+	rc.mu.Lock()
+	rc.pc = pc
+	rc.mu.Unlock()
+}
+
+func (rc *RobotClient) getClientConn() rpc.ClientConn {
+	// Must be called with `rc.mu` in ReadLock+ mode.
+	if rc.sharedConn != nil {
+		return rc.sharedConn
+	}
+
+	if rc.pc == nil {
+		return &rc.conn
+	}
+
+	rc.sharedConn = grpc.NewSharedConnForModule(&rc.conn, rc.pc, rc.logger.Sublogger("shared_conn"))
+	return rc.sharedConn
 }
 
 func unaryClientInterceptor() googlegrpc.UnaryClientInterceptor {
