@@ -158,14 +158,16 @@ func (rs APIRegistration[ResourceT]) RegisterRPCService(
 	ctx context.Context,
 	rpcServer rpc.Server,
 	apiColl APIResourceCollection[ResourceT],
-) error {
+) (any, error) {
 	if rs.RPCServiceServerConstructor == nil {
-		return nil
+		return nil, nil
 	}
-	return rpcServer.RegisterServiceServer(
+
+	server := rs.RPCServiceServerConstructor(apiColl)
+	return server, rpcServer.RegisterServiceServer(
 		ctx,
 		rs.RPCServiceDesc,
-		rs.RPCServiceServerConstructor(apiColl),
+		server,
 		rs.RPCServiceHandler,
 	)
 }

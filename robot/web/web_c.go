@@ -12,6 +12,7 @@ import (
 	streampb "go.viam.com/api/stream/v1"
 	"go.viam.com/utils/rpc"
 
+	"go.viam.com/rdk/ftdc"
 	"go.viam.com/rdk/gostream"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/resource"
@@ -20,7 +21,7 @@ import (
 )
 
 // New returns a new web service for the given robot.
-func New(r robot.Robot, logger logging.Logger, opts ...Option) Service {
+func New(r robot.Robot, logger logging.Logger, ftdc *ftdc.FTDC, opts ...Option) Service {
 	var wOpts options
 	for _, opt := range opts {
 		opt.apply(&wOpts)
@@ -33,6 +34,7 @@ func New(r robot.Robot, logger logging.Logger, opts ...Option) Service {
 		streamServer: nil,
 		services:     map[resource.API]resource.APIResourceCollection[resource.Resource]{},
 		opts:         wOpts,
+		ftdc:         ftdc,
 	}
 	return webSvc
 }
@@ -55,6 +57,7 @@ type webService struct {
 	isRunning    bool
 	webWorkers   sync.WaitGroup
 	modWorkers   sync.WaitGroup
+	ftdc         *ftdc.FTDC
 }
 
 // Reconfigure pulls resources and updates the stream server audio and video streams with the new resources.

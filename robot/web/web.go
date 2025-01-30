@@ -32,6 +32,7 @@ import (
 	googlegrpc "google.golang.org/grpc"
 
 	"go.viam.com/rdk/config"
+	"go.viam.com/rdk/ftdc"
 	"go.viam.com/rdk/grpc"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/module"
@@ -655,8 +656,18 @@ func (svc *webService) initAPIResourceCollections(ctx context.Context, mod bool)
 		if mod {
 			server = svc.modServer
 		}
-		if err := rs.RegisterRPCService(ctx, server, apiResColl); err != nil {
+
+		apiServerHandler, err := rs.RegisterRPCService(ctx, server, apiResColl)
+		if err != nil {
 			return err
+		}
+
+		if statser, ok := apiServerHandler.(ftdc.Statser); ok {
+			if mod {
+				svc.ftdc.Add(fmt.Sprintf("server.mod.%v", s.SubtypeName), statser)
+			} else {
+				svc.ftdc.Add(fmt.Sprintf("server.%v", s.SubtypeName), statser)
+			}
 		}
 	}
 	return nil

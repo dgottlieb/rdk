@@ -454,7 +454,7 @@ func newWithResources(
 
 	// we assume these never appear in our configs and as such will not be removed from the
 	// resource graph
-	r.webSvc = web.New(r, logger, rOpts.webOptions...)
+	r.webSvc = web.New(r, logger, r.ftdc, rOpts.webOptions...)
 	r.frameSvc, err = framesystem.New(ctx, resource.Dependencies{}, logger)
 	if err != nil {
 		return nil, err
