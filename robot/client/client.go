@@ -113,6 +113,8 @@ type RobotClient struct {
 	// webrtc. We don't want a network disconnect to result in reconnecting over tcp such that
 	// performance would be impacted.
 	serverIsWebrtcEnabled bool
+
+	sharedConn *grpc.SharedConn
 }
 
 // RemoteTypeName is the type name used for a remote. This is for internal use.
@@ -293,6 +295,9 @@ func New(ctx context.Context, address string, clientLogger logging.ZapCompatible
 		rpc.WithStreamClientInterceptor(streamClientInterceptor()),
 	)
 
+	// If we're a client running as part of a module, we annotate our requests with our module
+	// name. That way the receiver (e.g: viam-server) can execute logic based on where a request
+	// came from. Such as knowing what WebRTC connection to add a video track to.
 	if rOpts.modName != "" {
 		inter := &logging.ModInterceptors{ModName: rOpts.modName}
 		rc.dialOptions = append(rc.dialOptions, rpc.WithUnaryClientInterceptor(inter.UnaryClientInterceptor))
