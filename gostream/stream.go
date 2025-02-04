@@ -76,6 +76,7 @@ func NewStream(config StreamConfig, logger logging.Logger) (Stream, error) {
 
 	var trackLocal *trackLocalStaticSample
 	if config.VideoEncoderFactory != nil {
+		logger.Info("DBG. Registering new stream. ConfigName: ", config.Name, " Name: ", name)
 		trackLocal = newVideoTrackLocalStaticSample(
 			webrtc.RTPCodecCapability{MimeType: config.VideoEncoderFactory.MIMEType()},
 			"video",

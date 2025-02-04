@@ -273,7 +273,7 @@ func (server *Server) AddStream(ctx context.Context, req *streampb.AddStreamRequ
 
 	// if the stream supports video, add the video track
 	if trackLocal, haveTrackLocal := streamStateToAdd.Stream.VideoTrackLocal(); haveTrackLocal {
-		server.logger.Infof("Adding video track. Name: %v", req.GetName())
+		server.logger.Infof("DBG. Adding video track. Name: %v", req.GetName())
 		if err := addTrack(trackLocal); err != nil {
 			server.logger.Error(err.Error())
 			return nil, err

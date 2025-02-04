@@ -68,7 +68,7 @@ func setupModManager(
 	options modmanageroptions.Options,
 ) modmaninterface.ModuleManager {
 	t.Helper()
-	mgr := NewManager(ctx, parentAddr, logger, options)
+	mgr := NewManager(ctx, parentAddr, logger, options, nil)
 	t.Cleanup(func() {
 		// Wait for module recovery processes here because modmanager.Close does not.
 		// Do so by grabbing a copy of the modules and then waiting after
@@ -1136,7 +1136,7 @@ func TestRTPPassthrough(t *testing.T) {
 	parentAddr := setupSocketWithRobot(t)
 
 	greenLog(t, "test AddModule")
-	mgr := NewManager(ctx, parentAddr, logger, modmanageroptions.Options{UntrustedEnv: false})
+	mgr := NewManager(ctx, parentAddr, logger, modmanageroptions.Options{UntrustedEnv: false}, nil)
 	test.That(t, err, test.ShouldBeNil)
 
 	// add module executable
@@ -1342,7 +1342,7 @@ func TestAddStreamMaxTrackErr(t *testing.T) {
 	parentAddr := setupSocketWithRobot(t)
 
 	greenLog(t, "test AddModule")
-	mgr := NewManager(ctx, parentAddr, logger, modmanageroptions.Options{UntrustedEnv: false})
+	mgr := NewManager(ctx, parentAddr, logger, modmanageroptions.Options{UntrustedEnv: false}, nil)
 	defer func() {
 		test.That(t, mgr.Close(ctx), test.ShouldBeNil)
 	}()

@@ -82,6 +82,8 @@ type SharedConn struct {
 	onTrackCBByTrackName   map[string]OnTrackCB
 
 	logger logging.Logger
+
+	Special bool
 }
 
 func NewSharedConn(grpcConn rpc.ClientConn, peerConn *webrtc.PeerConnection, logger logging.Logger) *SharedConn {
@@ -96,15 +98,16 @@ func NewSharedConn(grpcConn rpc.ClientConn, peerConn *webrtc.PeerConnection, log
 		peerConnFailed:       make(chan struct{}),
 		onTrackCBByTrackName: make(map[string]OnTrackCB),
 		logger:               logger,
+		Special:              true,
 	}
 	ret.grpcConn.ReplaceConn(grpcConn)
 
 	ret.peerConn.OnTrack(func(trackRemote *webrtc.TrackRemote, rtpReceiver *webrtc.RTPReceiver) {
-		ret.logger.Info("OnTrack called:", trackRemote.ID())
 		sid := trackRemote.StreamID()
 		if sid == "rtsp-1" {
-			sid = "rdk:component:camera/rtsp-1"
+			// sid = "rdk:component:camera/rtsp-1"
 		}
+		ret.logger.Info("DBG. OnTrack called:", sid)
 		ret.onTrackCBByTrackNameMu.Lock()
 		onTrackCB, ok := ret.onTrackCBByTrackName[sid]
 		ret.onTrackCBByTrackNameMu.Unlock()
@@ -228,7 +231,7 @@ func (sc *SharedConn) ResetConn(conn rpc.ClientConn, moduleLogger logging.Logger
 
 	sc.peerConn = peerConn
 	sc.logger.Infof("Modmanager connection to module: %p", peerConn)
-	sc.peerConnReady, _, err = rpc.ConfigureForRenegotiation(peerConn, rpc.PeerRoleClient, sc.logger)
+	sc.peerConnReady, _, err = rpc.ConfigureForRenegotiation(peerConn, rpc.PeerRoleServer, sc.logger)
 	if err != nil {
 		sc.logger.Warnw("Unable to create optional renegotiation channel for module. Ignoring.", "err", err)
 		return

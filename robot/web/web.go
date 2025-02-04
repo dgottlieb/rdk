@@ -263,7 +263,7 @@ func (svc *webService) StartModule(ctx context.Context) error {
 		if ok {
 			return handler(ctx, req)
 		}
-		ctx = rpc.UnsafeContextWithPeerConnection(ctx, pc)
+		ctx = rpc.ContextWithPeerConnection(ctx, pc)
 		svc.logger.Infof("ctx after: %#v", ctx)
 		return handler(ctx, req)
 	}

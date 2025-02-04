@@ -479,6 +479,7 @@ func (c *client) SubscribeRTP(
 		// callback invoked.
 		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
+		c.logger.Info("DBG. AddStream TrackName:", c.trackName())
 		if _, err := c.streamClient.AddStream(ctx, &streampb.AddStreamRequest{Name: c.trackName()}); err != nil {
 			c.logger.CDebugw(ctx, "SubscribeRTP AddStream hit error", "subID", sub.ID.String(), "trackName", c.trackName(), "err", err)
 			return rtppassthrough.NilSubscription, err
@@ -669,7 +670,7 @@ func (c *client) Unsubscribe(ctx context.Context, id rtppassthrough.Subscription
 func (c *client) trackName() string {
 	// if c.conn is a *grpc.SharedConn then the client
 	// is talking to a module and we need to send the fully qualified name
-	if _, ok := c.conn.(*grpc.SharedConn); ok {
+	if sc, ok := c.conn.(*grpc.SharedConn); ok && !sc.Special {
 		return c.Name().String()
 	}
 
