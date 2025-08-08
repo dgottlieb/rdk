@@ -7,7 +7,6 @@ import (
 	"os/user"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -25,21 +24,21 @@ type moduleProcess struct {
 	conf   pexec.ProcessConfig
 	connCh chan ConnGeneration
 
-	process atomic.Pointer[processLifetime]
-	logger  logging.Logger
+	logger logging.Logger
 
-	wg      sync.WaitGroup
-	isAlive atomic.Bool
+	wg        sync.WaitGroup
+	isAlive   bool
+	process   *processLifetime
+	restartMu sync.Mutex
 }
 
 func NewModuleProcess(conf pexec.ProcessConfig, logger logging.Logger) *moduleProcess {
-	ret := &moduleProcess{
-		conf:   conf,
-		connCh: make(chan ConnGeneration),
-		logger: logger,
+	return &moduleProcess{
+		conf:    conf,
+		connCh:  make(chan ConnGeneration),
+		logger:  logger,
+		isAlive: true,
 	}
-	ret.isAlive.Store(true)
-	return ret
 }
 
 // Start returns immediately:
@@ -53,11 +52,10 @@ func NewModuleProcess(conf pexec.ProcessConfig, logger logging.Logger) *modulePr
 func (mp *moduleProcess) Start() (<-chan ConnGeneration, error) {
 	const firstGenerationId = 0
 	generationLogger := mp.logger.Sublogger(fmt.Sprintf("generation_%v", firstGenerationId))
-	process := newProcessLifetime(firstGenerationId, generationLogger)
-	mp.process.Store(process)
+	mp.process = newProcessLifetime(firstGenerationId, generationLogger)
 
 	socketFilename := mp.conf.Args[0]
-	if err := process.Start(socketFilename, mp.conf, mp.connCh); err != nil {
+	if err := mp.process.Start(socketFilename, mp.conf, mp.connCh); err != nil {
 		return nil, err
 	}
 
@@ -65,18 +63,20 @@ func (mp *moduleProcess) Start() (<-chan ConnGeneration, error) {
 	mp.wg.Add(1)
 	go func() {
 		defer mp.wg.Done()
-		processVar := mp.process.Load()
 		nextGenerationId := firstGenerationId + 1
 		for {
-			processVar.wait()
+			mp.process.wait()
+
 			// If the `moduleProcess` is stopped, `isAlive` is guaranteed to be set to false before
 			// the `cmd` is interrupted.
-			if !mp.isAlive.Load() {
+			mp.restartMu.Lock()
+			if !mp.isAlive {
+				mp.restartMu.Unlock()
 				return
 			}
 
 			generationLogger = mp.logger.Sublogger(fmt.Sprintf("generation_%v", nextGenerationId))
-			processVar = newProcessLifetime(nextGenerationId, generationLogger)
+			mp.process = newProcessLifetime(nextGenerationId, generationLogger)
 			nextGenerationId++
 
 			// TODO: Describe what a `Start` failure is and what our options are. Note the
@@ -97,13 +97,10 @@ func (mp *moduleProcess) Start() (<-chan ConnGeneration, error) {
 			//
 			// It's not a correctness problem to keep trying. It's an inefficiency. Ideally we'd
 			// only retry when we have reason to believe a retry will succeed.
-			if startErr := processVar.Start(socketFilename, mp.conf, mp.connCh); startErr != nil {
+			if startErr := mp.process.Start(socketFilename, mp.conf, mp.connCh); startErr != nil {
 				generationLogger.Warn("Error starting process. Retrying.")
-			} else {
-				// We must first call `Start` before publishing. `Start` has the side effect of
-				// initializing the underlying process member fields.
-				mp.process.Store(processVar)
 			}
+			mp.restartMu.Unlock()
 
 			// After every crash, lets have some backoff. In case a module program spits out a bunch
 			// of output and immediately crashes. We don't want to unnecessarily spam the viam logs.
@@ -116,15 +113,23 @@ func (mp *moduleProcess) Start() (<-chan ConnGeneration, error) {
 
 // Stop returns an error if the underlying module process may still be running.
 func (mp *moduleProcess) Stop() error {
-	// First set `isAlive` to false such that the restart goroutine exits without restarting the
-	// module process.
-	mp.isAlive.Store(false)
+	// First set `isAlive` to false such that the restart goroutine will exit.
+	mp.restartMu.Lock()
+	mp.isAlive = false
+	mp.restartMu.Unlock()
+
 	// Inform the `moduleProcess` owner that there will be no more connections to the module
 	// process.
 	close(mp.connCh)
+
 	// Stop the underlying process. Save the error for a return value. In case we're not sure the
 	// process has exited.
-	stopErr := mp.process.Load().Stop()
+	mp.restartMu.Lock()
+	// By acquiring the restart mutex here, after setting `isAlive` to false, we're guaranteed to
+	// observe the last "process lifetime".
+	stopErr := mp.process.Stop()
+	mp.restartMu.Unlock()
+
 	// Wait on the process restart goroutine to exit.
 	mp.wg.Wait()
 	return stopErr
@@ -137,9 +142,8 @@ func (mp *moduleProcess) Stop() error {
 // general case the caller does not know the runtime stability of the underlying process. And it
 // will receive the exit code of an arbitrary process lifetime generation.
 func (mp *moduleProcess) exitCode() int {
-	process := mp.process.Load()
-	process.Stop()
-	return process.cmd.ProcessState.ExitCode()
+	// Because `Stop` was already called, the `process` variable is safe to read without a mutex.
+	return mp.process.cmd.ProcessState.ExitCode()
 }
 
 // CheckSocketOwner verifies that UID of a filepath/socket matches the current process's UID.

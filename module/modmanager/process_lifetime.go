@@ -141,7 +141,7 @@ func (pl *processLifetime) wait() error {
 	return pl.waitErr
 }
 
-// Stop returns an error if the process may still be running.
+// Stop returns an error if the process may still be running. Stop is idempotent.
 func (pl *processLifetime) Stop() error {
 	// Send a signal to the program.
 	pl.cmd.Process.Signal(syscall.SIGTERM)
