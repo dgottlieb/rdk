@@ -41,14 +41,10 @@ func BuildTempModule(tb testing.TB, modFile string) string {
 	return exePath
 }
 
-func TestRunWellBehaved(t *testing.T) {
-	ctx := context.Background()
-	_ = ctx
+func setup(t *testing.T, testModuleNoDotGo string, logger logging.Logger) *moduleProcess {
+	programPath := BuildTempModule(t, fmt.Sprintf("./test_modules/%v.go", testModuleNoDotGo))
 
-	logger := logging.NewTestLogger(t)
-	programPath := BuildTempModule(t, "./test_modules/well_behaved.go")
-
-	fileSocketPath, err := modlib.CreateSocketAddress("./", "well-behaved")
+	fileSocketPath, err := modlib.CreateSocketAddress("./", testModuleNoDotGo)
 	test.That(t, err, test.ShouldBeNil)
 	// Cleanup previous tests.
 	_ = os.Remove(fileSocketPath)
@@ -58,7 +54,7 @@ func TestRunWellBehaved(t *testing.T) {
 	test.That(t, os.IsNotExist(err), test.ShouldBeTrue)
 
 	logger.Info("Socket:", fileSocketPath)
-	mp := NewModuleProcess(pexec.ProcessConfig{
+	return NewModuleProcess(pexec.ProcessConfig{
 		ID:           "id",
 		Name:         programPath,
 		Args:         []string{fileSocketPath},
@@ -67,6 +63,14 @@ func TestRunWellBehaved(t *testing.T) {
 		StdOutLogger: logger.Sublogger("stdout"),
 		StdErrLogger: logger.Sublogger("stderr"),
 	}, logger)
+}
+
+func TestRunWellBehaved(t *testing.T) {
+	ctx := context.Background()
+	_ = ctx
+
+	logger := logging.NewTestLogger(t)
+	mp := setup(t, "well_behaved", logger)
 	conns, err := mp.Start()
 	test.That(t, err, test.ShouldBeNil)
 
