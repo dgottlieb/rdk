@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/pkg/errors"
@@ -143,7 +144,7 @@ func (pl *processLifetime) wait() error {
 // Stop returns an error if the process may still be running.
 func (pl *processLifetime) Stop() error {
 	// Send a signal to the program.
-	pl.cmd.Process.Signal(os.Interrupt)
+	pl.cmd.Process.Signal(syscall.SIGTERM)
 
 	// Save the error. An error here may mean the program is still running.
 	stopErr := pl.wait()
