@@ -95,6 +95,10 @@ func (mp *moduleProcess) Stop() error {
 	return stopErr
 }
 
+func (mp *moduleProcess) ExitCode() int {
+	return mp.cmd.ProcessState.ExitCode()
+}
+
 // CheckSocketOwner verifies that UID of a filepath/socket matches the current process's UID.
 func CheckSocketOwner(address string) error {
 	// check that the module socket has the same ownership as our process

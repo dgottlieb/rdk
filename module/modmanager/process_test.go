@@ -85,4 +85,5 @@ func TestRunWellBehaved(t *testing.T) {
 	}
 
 	test.That(t, mp.Stop(), test.ShouldBeNil)
+	test.That(t, mp.ExitCode(), test.ShouldEqual, 0)
 }
