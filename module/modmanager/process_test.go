@@ -67,17 +67,18 @@ func setup(t *testing.T, testModuleNoDotGo string, logger logging.Logger) *modul
 
 func TestRunWellBehaved(t *testing.T) {
 	ctx := context.Background()
-	_ = ctx
-
 	logger := logging.NewTestLogger(t)
 	mp := setup(t, "well_behaved", logger)
+
 	conns, err := mp.Start()
 	test.That(t, err, test.ShouldBeNil)
 
+	connTimeout, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	select {
 	case <-conns:
 		break
-	case <-time.After(5 * time.Second):
+	case <-connTimeout.Done():
 		logger.Error("Failed to dial to module.")
 		mp.Stop()
 		t.FailNow()
