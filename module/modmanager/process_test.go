@@ -65,7 +65,7 @@ func setup(t *testing.T, testModuleNoDotGo string, logger logging.Logger) *modul
 	}, logger)
 }
 
-func TestRunWellBehaved(t *testing.T) {
+func TestProcessWellBehaved(t *testing.T) {
 	ctx := context.Background()
 	logger := logging.NewTestLogger(t)
 	mp := setup(t, "well_behaved", logger)
@@ -76,7 +76,8 @@ func TestRunWellBehaved(t *testing.T) {
 	connTimeout, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	select {
-	case <-conns:
+	case connGen := <-conns:
+		test.That(t, connGen.Generation, test.ShouldEqual, 0)
 		break
 	case <-connTimeout.Done():
 		logger.Error("Failed to dial to module.")
@@ -85,10 +86,10 @@ func TestRunWellBehaved(t *testing.T) {
 	}
 
 	test.That(t, mp.Stop(), test.ShouldBeNil)
-	test.That(t, mp.ExitCode(), test.ShouldEqual, 0)
+	test.That(t, mp.exitCode(), test.ShouldEqual, 0)
 }
 
-func TestCrashesAfterUnixSocketCreation(t *testing.T) {
+func TestProcessCrashesAfterUnixSocketCreation(t *testing.T) {
 	ctx := context.Background()
 
 	logger := logging.NewTestLogger(t)
@@ -97,10 +98,12 @@ func TestCrashesAfterUnixSocketCreation(t *testing.T) {
 	conns, err := mp.Start()
 	test.That(t, err, test.ShouldBeNil)
 
+	// Initial connection will succeed.
 	connTimeout, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	select {
-	case <-conns:
+	case connGen := <-conns:
+		test.That(t, connGen.Generation, test.ShouldEqual, 0)
 		break
 	case <-connTimeout.Done():
 		logger.Error("Failed to dial to module.")
@@ -111,7 +114,8 @@ func TestCrashesAfterUnixSocketCreation(t *testing.T) {
 	// We expect the module to crash after creating a connection. The moduleProcess logic will
 	// restart in the background and pass back a new connection on the `conns` channel.
 	select {
-	case <-conns:
+	case connGen := <-conns:
+		test.That(t, connGen.Generation, test.ShouldEqual, 1)
 		break
 	case <-connTimeout.Done():
 		logger.Error("Failed to redial after crash.")
@@ -120,5 +124,6 @@ func TestCrashesAfterUnixSocketCreation(t *testing.T) {
 	}
 
 	test.That(t, mp.Stop(), test.ShouldBeNil)
-	test.That(t, mp.ExitCode(), test.ShouldEqual, 2)
+	// The test module explicitly exits with code 10.
+	test.That(t, mp.exitCode(), test.ShouldEqual, 10)
 }

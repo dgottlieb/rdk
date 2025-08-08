@@ -1,102 +1,145 @@
 package modmanager
 
 import (
-	"bufio"
-	"context"
 	"fmt"
-	"io"
 	"net"
 	"os"
-	"os/exec"
 	"os/user"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/pkg/errors"
 	"go.viam.com/rdk/logging"
-	"go.viam.com/utils"
 	"go.viam.com/utils/pexec"
 )
 
+type ConnGeneration struct {
+	Conn       net.Conn
+	Generation int
+}
+
 type moduleProcess struct {
-	conf    pexec.ProcessConfig
-	cmd     *exec.Cmd
-	connCh  chan net.Conn
-	workers *utils.StoppableWorkers
+	conf   pexec.ProcessConfig
+	connCh chan ConnGeneration
+
+	process atomic.Pointer[processLifetime]
 	logger  logging.Logger
+
+	wg      sync.WaitGroup
+	isAlive atomic.Bool
 }
 
 func NewModuleProcess(conf pexec.ProcessConfig, logger logging.Logger) *moduleProcess {
-	return &moduleProcess{
+	ret := &moduleProcess{
 		conf:   conf,
-		connCh: make(chan net.Conn),
+		connCh: make(chan ConnGeneration),
 		logger: logger,
 	}
+	ret.isAlive.Store(true)
+	return ret
 }
 
 // Start returns immediately:
 //   - If the error is nil, Start has started the process. The returned channel provides a connection
 //     every time the module restarts.
 //   - If the error is not nil, the module process cannot be run. A new process config is required.
-func (mp *moduleProcess) Start() (<-chan net.Conn, error) {
+//
+// Dan: Because I'm lazy, connections may be returned out of order in crash-heavy scenarios. The
+// caller must only replace their connection handle if the next `ConnGeneration` has a higher
+// `Generation` number.
+func (mp *moduleProcess) Start() (<-chan ConnGeneration, error) {
+	const firstGenerationId = 0
+	generationLogger := mp.logger.Sublogger(fmt.Sprintf("generation_%v", firstGenerationId))
+	process := newProcessLifetime(firstGenerationId, generationLogger)
+	mp.process.Store(process)
+
 	socketFilename := mp.conf.Args[0]
-	mp.cmd = exec.Command(mp.conf.Name, mp.conf.Args...)
-	stdout, err := mp.cmd.StdoutPipe()
-	if err != nil {
-		// stop(mp.process)
+	if err := process.Start(socketFilename, mp.conf, mp.connCh); err != nil {
 		return nil, err
 	}
 
-	mp.workers = utils.NewBackgroundStoppableWorkers(func(ctx context.Context) {
-		stdoutReader := bufio.NewReader(stdout)
+	// `process.Start` returned without an error. `mp.process.cmd` is guaranteed to be non-nil.
+	mp.wg.Add(1)
+	go func() {
+		defer mp.wg.Done()
+		processVar := mp.process.Load()
+		nextGenerationId := firstGenerationId + 1
 		for {
-			line, _, err := stdoutReader.ReadLine()
-			if errors.Is(err, io.EOF) {
+			processVar.wait()
+			// If the `moduleProcess` is stopped, `isAlive` is guaranteed to be set to false before
+			// the `cmd` is interrupted.
+			if !mp.isAlive.Load() {
 				return
 			}
 
-			mp.conf.StdOutLogger.Info(string(line))
-		}
-	})
+			generationLogger = mp.logger.Sublogger(fmt.Sprintf("generation_%v", nextGenerationId))
+			processVar = newProcessLifetime(nextGenerationId, generationLogger)
+			nextGenerationId++
 
-	if err := mp.cmd.Start(); err != nil {
-		return nil, err
-	}
-
-	mp.workers.Add(func(ctx context.Context) {
-		for ctx.Err() == nil {
-			if err := CheckSocketOwner(socketFilename); err != nil {
-				fmt.Println("Owner error:", err)
+			// TODO: Describe what a `Start` failure is and what our options are. Note the
+			// inconsistency between an initial `Start` error for `firstGenerationId`
+			// (moduleProcess.Start returns an error) versus this `Start` failing (we retry).
+			//
+			// We do this because we don't have a good way to inform the higher level caller that
+			// something that used to work is now failing at a much earlier step.
+			//
+			// Also, if firstGenerationId's `Start` succeeds, and this retry `Start` fails, the
+			// underlying problem may become reversed without us doing anything. E.g: a `Start` can
+			// fail because a binary was moved out of place. It's possible it will be moved back
+			// into place.
+			//
+			// Broadly, we're providing a contract that if `moduleProcess.Start` returns success,
+			// `moduleProcess` will try its hardest to keep the process running. Even if that's
+			// looking to be unlikely. It's too late now to change our minds.
+			//
+			// It's not a correctness problem to keep trying. It's an inefficiency. Ideally we'd
+			// only retry when we have reason to believe a retry will succeed.
+			if startErr := processVar.Start(socketFilename, mp.conf, mp.connCh); startErr != nil {
+				generationLogger.Warn("Error starting process. Retrying.")
 			} else {
-				mp.logger.Infow("Socket owned", "file", socketFilename)
-				conn, err := net.Dial("unix", socketFilename)
-				if err != nil {
-					mp.logger.Warnw("Error dialing to socket file", "file", socketFilename, "err", err)
-				} else {
-					mp.logger.Infow("Successfully dialed socket file", "file", socketFilename)
-					mp.connCh <- conn
-					return
-				}
+				// We must first call `Start` before publishing. `Start` has the side effect of
+				// initializing the underlying process member fields.
+				mp.process.Store(processVar)
 			}
-			time.Sleep(100 * time.Millisecond)
+
+			// After every crash, lets have some backoff. In case a module program spits out a bunch
+			// of output and immediately crashes. We don't want to unnecessarily spam the viam logs.
+			time.Sleep(time.Second)
 		}
-	})
+	}()
 
 	return mp.connCh, nil
 }
 
+// Stop returns an error if the underlying module process may still be running.
 func (mp *moduleProcess) Stop() error {
-	fmt.Println("Interrupting")
-	mp.cmd.Process.Signal(os.Interrupt)
-	mp.cmd.WaitDelay = time.Second
-	stopErr := mp.cmd.Wait()
-	mp.workers.Stop()
+	// First set `isAlive` to false such that the restart goroutine exits without restarting the
+	// module process.
+	mp.isAlive.Store(false)
+	// Inform the `moduleProcess` owner that there will be no more connections to the module
+	// process.
+	close(mp.connCh)
+	// Stop the underlying process. Save the error for a return value. In case we're not sure the
+	// process has exited.
+	stopErr := mp.process.Load().Stop()
+	// Wait on the process restart goroutine to exit.
+	mp.wg.Wait()
 	return stopErr
 }
 
-func (mp *moduleProcess) ExitCode() int {
-	return mp.cmd.ProcessState.ExitCode()
+// exitCode must be called after `Stop` succeeds. Otherwise Go will not observe/fill in the exit
+// code to return. It instead returns -1.
+//
+// This method is a helper exposed for internal tests to assert/confirm expected behavior. In the
+// general case the caller does not know the runtime stability of the underlying process. And it
+// will receive the exit code of an arbitrary process lifetime generation.
+func (mp *moduleProcess) exitCode() int {
+	process := mp.process.Load()
+	process.Stop()
+	return process.cmd.ProcessState.ExitCode()
 }
 
 // CheckSocketOwner verifies that UID of a filepath/socket matches the current process's UID.
@@ -106,17 +149,21 @@ func CheckSocketOwner(address string) error {
 	if err != nil {
 		return err
 	}
+
 	sockUID := int(info.Sys().(*syscall.Stat_t).Uid)
 	if serverUID := os.Getuid(); serverUID != sockUID {
 		sockUser, err := user.LookupId(strconv.Itoa(sockUID))
 		if err != nil {
 			return errors.Wrap(err, "error looking up user")
 		}
+
 		serverUser, err := user.LookupId(strconv.Itoa(serverUID))
 		if err != nil {
 			return errors.Wrap(err, "error looking up user")
 		}
+
 		return errors.Errorf("socket owned by %s while process is owned by %s", sockUser.Name, serverUser.Name)
 	}
+
 	return nil
 }

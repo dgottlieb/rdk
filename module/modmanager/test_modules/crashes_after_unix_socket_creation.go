@@ -30,7 +30,8 @@ func mainWithArgs(ctx context.Context, args []string, logger logging.Logger) err
 
 	_, err = lis.Accept()
 	if err == nil {
-		panic("intentional crash")
+		// The test asserts on this exit code.
+		os.Exit(10)
 	}
 
 	return nil
