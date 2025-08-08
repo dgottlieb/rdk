@@ -23,7 +23,6 @@ type ConnGeneration struct {
 type moduleProcess struct {
 	conf   pexec.ProcessConfig
 	connCh chan ConnGeneration
-
 	logger logging.Logger
 
 	wg        sync.WaitGroup
@@ -113,22 +112,17 @@ func (mp *moduleProcess) Start() (<-chan ConnGeneration, error) {
 
 // Stop returns an error if the underlying module process may still be running.
 func (mp *moduleProcess) Stop() error {
-	// First set `isAlive` to false such that the restart goroutine will exit.
+	// Take the `restartMu` to take ownership of the `process` value. Such that we can `Stop` it
+	// without racing with the restart checker.
 	mp.restartMu.Lock()
 	mp.isAlive = false
+	// Save the error for a return value. In case we're not sure the process has exited.
+	stopErr := mp.process.Stop()
 	mp.restartMu.Unlock()
 
 	// Inform the `moduleProcess` owner that there will be no more connections to the module
 	// process.
 	close(mp.connCh)
-
-	// Stop the underlying process. Save the error for a return value. In case we're not sure the
-	// process has exited.
-	mp.restartMu.Lock()
-	// By acquiring the restart mutex here, after setting `isAlive` to false, we're guaranteed to
-	// observe the last "process lifetime".
-	stopErr := mp.process.Stop()
-	mp.restartMu.Unlock()
 
 	// Wait on the process restart goroutine to exit.
 	mp.wg.Wait()
