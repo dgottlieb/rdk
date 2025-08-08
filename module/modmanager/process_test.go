@@ -87,3 +87,38 @@ func TestRunWellBehaved(t *testing.T) {
 	test.That(t, mp.Stop(), test.ShouldBeNil)
 	test.That(t, mp.ExitCode(), test.ShouldEqual, 0)
 }
+
+func TestCrashesAfterUnixSocketCreation(t *testing.T) {
+	ctx := context.Background()
+
+	logger := logging.NewTestLogger(t)
+	mp := setup(t, "crashes_after_unix_socket_creation", logger)
+
+	conns, err := mp.Start()
+	test.That(t, err, test.ShouldBeNil)
+
+	connTimeout, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	select {
+	case <-conns:
+		break
+	case <-connTimeout.Done():
+		logger.Error("Failed to dial to module.")
+		mp.Stop()
+		t.FailNow()
+	}
+
+	// We expect the module to crash after creating a connection. The moduleProcess logic will
+	// restart in the background and pass back a new connection on the `conns` channel.
+	select {
+	case <-conns:
+		break
+	case <-connTimeout.Done():
+		logger.Error("Failed to redial after crash.")
+		mp.Stop()
+		t.FailNow()
+	}
+
+	test.That(t, mp.Stop(), test.ShouldBeNil)
+	test.That(t, mp.ExitCode(), test.ShouldEqual, 2)
+}
