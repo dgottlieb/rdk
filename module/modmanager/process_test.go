@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
 	"go.viam.com/rdk/logging"
 	modlib "go.viam.com/rdk/module"
 	"go.viam.com/test"
@@ -80,9 +81,8 @@ func TestProcessWellBehaved(t *testing.T) {
 		test.That(t, connGen.Generation, test.ShouldEqual, 0)
 		break
 	case <-connTimeout.Done():
-		logger.Error("Failed to dial to module.")
 		mp.Stop()
-		t.FailNow()
+		test.That(t, errors.New("Failed to dial to module"), test.ShouldBeNil)
 	}
 
 	test.That(t, mp.Stop(), test.ShouldBeNil)
@@ -106,9 +106,8 @@ func TestProcessCrashesAfterUnixSocketCreation(t *testing.T) {
 		test.That(t, connGen.Generation, test.ShouldEqual, 0)
 		break
 	case <-connTimeout.Done():
-		logger.Error("Failed to dial to module.")
 		mp.Stop()
-		t.FailNow()
+		test.That(t, errors.New("Failed to dial to module"), test.ShouldBeNil)
 	}
 
 	// We expect the module to crash after creating a connection. The moduleProcess logic will
@@ -118,12 +117,35 @@ func TestProcessCrashesAfterUnixSocketCreation(t *testing.T) {
 		test.That(t, connGen.Generation, test.ShouldEqual, 1)
 		break
 	case <-connTimeout.Done():
-		logger.Error("Failed to redial after crash.")
 		mp.Stop()
-		t.FailNow()
+		test.That(t, errors.New("Failed to redial after crash."), test.ShouldBeNil)
 	}
 
 	test.That(t, mp.Stop(), test.ShouldBeNil)
 	// The test module explicitly exits with code 10.
 	test.That(t, mp.exitCode(), test.ShouldEqual, 10)
+}
+
+func TestProcessCrashesBeforeUnixSocketCreation(t *testing.T) {
+	ctx := context.Background()
+
+	logger := logging.NewTestLogger(t)
+	mp := setup(t, "crashes_before_unix_socket_creation", logger)
+
+	conns, err := mp.Start()
+	test.That(t, err, test.ShouldBeNil)
+
+	// Initial connection will succeed.
+	connTimeout, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	select {
+	case <-conns:
+		test.That(t, errors.New("Incorrectly dialed to module that never listened to a socket."), test.ShouldBeNil)
+	case <-connTimeout.Done():
+	}
+
+	// Assert that the program definitively stopped.
+	test.That(t, mp.Stop(), test.ShouldBeNil)
+	// Assert the hard coded exit code the program exits with.
+	test.That(t, mp.exitCode(), test.ShouldEqual, 6)
 }
