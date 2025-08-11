@@ -8,6 +8,8 @@ package v1
 
 import (
 	context "context"
+	"fmt"
+
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -70,8 +72,14 @@ func (c *moduleServiceClient) RemoveResource(ctx context.Context, in *RemoveReso
 	return out, nil
 }
 
+type Debug interface {
+	Debug()
+}
+
 func (c *moduleServiceClient) Ready(ctx context.Context, in *ReadyRequest, opts ...grpc.CallOption) (*ReadyResponse, error) {
 	out := new(ReadyResponse)
+	fmt.Printf("DBG. Invoking: %p Type: %T\n", c.cc, c.cc)
+	c.cc.(Debug).Debug()
 	err := c.cc.Invoke(ctx, "/viam.module.v1.ModuleService/Ready", in, out, opts...)
 	if err != nil {
 		return nil, err

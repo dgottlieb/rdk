@@ -888,6 +888,7 @@ func (s *Server) Serve(lis net.Listener) error {
 	var tempDelay time.Duration // how long to sleep on accept failure
 	for {
 		rawConn, err := lis.Accept()
+		fmt.Println("Conn made. Err:", err)
 		if err != nil {
 			if ne, ok := err.(interface {
 				Temporary() bool
