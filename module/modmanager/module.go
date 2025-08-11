@@ -419,12 +419,11 @@ func (m *module) killProcessGroup() {
 }
 
 func (m *module) killProcessGroupNew() {
-	if m.process == nil {
+	if m.processNew == nil {
 		return
 	}
 	m.logger.Infof("Killing module: %s process", m.cfg.Name)
-	// m.process.KillGroup()
-	m.processNew.process.Stop()
+	m.processNew.Stop()
 }
 
 func (m *module) registerResourceModels(mgr *Manager) {

@@ -187,7 +187,6 @@ func TestModuleIntegration(t *testing.T) {
 
 	conns, err := mod.startProcessNew(connTimeout, fileSocketPath, nil, "", "")
 	test.That(t, err, test.ShouldBeNil)
-	defer mod.killProcessGroup()
 
 	conn := <-conns
 	test.That(t, conn.Generation, test.ShouldEqual, 0)
@@ -199,15 +198,6 @@ func TestModuleIntegration(t *testing.T) {
 	err = mod.checkReady(ctx, returnSocketPath)
 	test.That(t, err, test.ShouldBeNil)
 
-	// select {
-	// case connGen := <-conns:
-	//  	test.That(t, connGen.Generation, test.ShouldEqual, 0)
-	//  	break
-	// case <-connTimeout.Done():
-	//  	mp.Stop()
-	//  	test.That(t, errors.New("Failed to dial to module"), test.ShouldBeNil)
-	// }
-	//
-	// test.That(t, mp.Stop(), test.ShouldBeNil)
-	// test.That(t, mp.exitCode(), test.ShouldEqual, 0)
+	mod.killProcessGroupNew()
+	test.That(t, mod.processNew.exitCode(), test.ShouldEqual, 0)
 }
