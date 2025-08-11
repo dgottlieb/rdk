@@ -5,17 +5,22 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/exec"
 	"sync"
 	"syscall"
 	"time"
 
+	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
 	"github.com/pkg/errors"
+	rdkgrpc "go.viam.com/rdk/grpc"
 	"go.viam.com/rdk/logging"
+	"go.viam.com/rdk/operation"
 	"go.viam.com/utils"
 	"go.viam.com/utils/pexec"
+	"go.viam.com/utils/rpc"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type processLifetime struct {
@@ -66,14 +71,30 @@ func (pl *processLifetime) Start(socketFilename string, conf pexec.ProcessConfig
 			}
 
 			pl.logger.Infow("Socket owned", "file", socketFilename)
-			conn, err := net.Dial("unix", socketFilename)
+			// conn, err := net.Dial("unix", socketFilename)
+			conn, err := grpc.Dial(
+				socketFilename,
+				grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(rpc.MaxMessageSize)),
+				grpc.WithTransportCredentials(insecure.NewCredentials()),
+				grpc.WithChainUnaryInterceptor(
+					rdkgrpc.EnsureTimeoutUnaryClientInterceptor,
+					grpc_retry.UnaryClientInterceptor(),
+					operation.UnaryClientInterceptor,
+				),
+				grpc.WithChainStreamInterceptor(
+					grpc_retry.StreamClientInterceptor(),
+					operation.StreamClientInterceptor,
+				),
+			)
+
 			if err != nil {
 				pl.logger.Warnw("Error dialing to socket file", "file", socketFilename, "err", err)
-			} else {
-				pl.logger.Infow("Successfully dialed socket file", "file", socketFilename)
-				onConn <- ConnGeneration{conn, pl.generationId}
-				return
+				continue
 			}
+
+			pl.logger.Infow("Successfully dialed socket file", "file", socketFilename)
+			onConn <- ConnGeneration{conn, pl.generationId}
+			return
 		}
 	})
 
@@ -83,17 +104,34 @@ func (pl *processLifetime) Start(socketFilename string, conf pexec.ProcessConfig
 		return err
 	}
 
-	stderr, err := pl.cmd.StderrPipe()
-	if err != nil {
-		return err
-	}
-	// TODO: Create stderr read loop.
-	_ = stderr
-
 	pl.workers.Add(func(ctx context.Context) {
 		stdoutReader := bufio.NewReader(stdout)
 		for {
 			line, _, err := stdoutReader.ReadLine()
+			if errors.Is(err, io.EOF) {
+				return
+			} else if err != nil {
+				// Dan: When modules crash, I also see errors such as `*fs.PathError`. With a string
+				// value of `read |0: file already closed`. I expect all errors here are
+				// terminal. But choosing to log these to satisfy my curiosity.
+				//
+				// Can run `TestCrashesAfterUnixSocketCreation` to reproduce.
+				conf.StdErrLogger.Debugf("Error on readline. Type: %T Err: %v", err, err)
+				return
+			}
+
+			conf.StdOutLogger.Info(string(line))
+		}
+	})
+
+	stderr, err := pl.cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
+	pl.workers.Add(func(ctx context.Context) {
+		stderrReader := bufio.NewReader(stderr)
+		for {
+			line, _, err := stderrReader.ReadLine()
 			if errors.Is(err, io.EOF) {
 				return
 			} else if err != nil {

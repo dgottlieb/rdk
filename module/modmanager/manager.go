@@ -368,7 +368,9 @@ func (mgr *Manager) startModule(ctx context.Context, mod *module) error {
 		return errors.WithMessage(err, "error while starting module "+mod.cfg.Name)
 	}
 
-	// Does a gRPC dial. Sets up a SharedConn with a PeerConnection that is not yet connected.
+	// New code: startModuleProcess will `dial` under the hood.
+	//
+	// Old Code: Does a gRPC dial. Sets up a SharedConn with a PeerConnection that is not yet connected.
 	if err := mod.dial(); err != nil {
 		return errors.WithMessage(err, "error while dialing module "+mod.cfg.Name)
 	}

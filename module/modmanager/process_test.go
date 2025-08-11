@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"go.viam.com/rdk/config"
 	"go.viam.com/rdk/logging"
 	modlib "go.viam.com/rdk/module"
+	"go.viam.com/rdk/resource"
 	"go.viam.com/test"
 	"go.viam.com/utils/pexec"
 )
@@ -30,8 +32,8 @@ func BuildTempModule(tb testing.TB, modFile string) string {
 	builder.Dir = filepath.Dir(modFile)
 
 	out, err := builder.CombinedOutput()
-	fmt.Println("Output:", string(out))
 	if err != nil {
+		fmt.Println("BuildTempModule Output:", string(out))
 		tb.Error(err)
 	}
 
@@ -148,4 +150,64 @@ func TestProcessCrashesBeforeUnixSocketCreation(t *testing.T) {
 	test.That(t, mp.Stop(), test.ShouldBeNil)
 	// Assert the hard coded exit code the program exits with.
 	test.That(t, mp.exitCode(), test.ShouldEqual, 6)
+}
+
+func TestModuleIntegration(t *testing.T) {
+	ctx := context.Background()
+	logger := logging.NewTestLogger(t)
+	programPath := BuildTempModule(t, fmt.Sprintf("./test_modules/publish_models.go"))
+	mod := &module{
+		cfg: config.Module{
+			Name:     "publish_modules",
+			ExePath:  programPath,
+			LogLevel: "debug",
+			Type:     "local",
+			TCPMode:  false,
+		},
+		dataDir:   "", //moduleDataDir,
+		resources: make(map[resource.Name]*addedResource),
+		logger:    logger.Sublogger("publish_modules"),
+		ftdc:      nil, // mgr.ftdc,
+	}
+
+	fileSocketPath, err := modlib.CreateSocketAddress("./", "module_integration.sock")
+	test.That(t, err, test.ShouldBeNil)
+	// Cleanup previous tests.
+	_ = os.Remove(fileSocketPath)
+
+	// Assert file does not exist.
+	_, err = os.Stat(fileSocketPath)
+	test.That(t, os.IsNotExist(err), test.ShouldBeTrue)
+
+	// conns, err := mp.Start()
+	// test.That(t, err, test.ShouldBeNil)
+
+	connTimeout, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	conns, err := mod.startProcessNew(connTimeout, fileSocketPath, nil, "", "")
+	test.That(t, err, test.ShouldBeNil)
+	defer mod.killProcessGroup()
+
+	conn := <-conns
+	test.That(t, conn.Generation, test.ShouldEqual, 0)
+
+	// Initialize the `sharedConn` + clients.
+	mod.dialNew(conn.Conn)
+
+	returnSocketPath := setupSocketWithRobot(t)
+	err = mod.checkReady(ctx, returnSocketPath)
+	test.That(t, err, test.ShouldBeNil)
+
+	// select {
+	// case connGen := <-conns:
+	//  	test.That(t, connGen.Generation, test.ShouldEqual, 0)
+	//  	break
+	// case <-connTimeout.Done():
+	//  	mp.Stop()
+	//  	test.That(t, errors.New("Failed to dial to module"), test.ShouldBeNil)
+	// }
+	//
+	// test.That(t, mp.Stop(), test.ShouldBeNil)
+	// test.That(t, mp.exitCode(), test.ShouldEqual, 0)
 }

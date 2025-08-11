@@ -2,7 +2,6 @@ package modmanager
 
 import (
 	"fmt"
-	"net"
 	"os"
 	"os/user"
 	"strconv"
@@ -13,10 +12,12 @@ import (
 	"github.com/pkg/errors"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/utils/pexec"
+	"google.golang.org/grpc"
 )
 
 type ConnGeneration struct {
-	Conn       net.Conn
+	// Conn       net.Conn
+	Conn       *grpc.ClientConn
 	Generation int
 }
 
@@ -75,6 +76,7 @@ func (mp *moduleProcess) Start() (<-chan ConnGeneration, error) {
 			}
 
 			generationLogger = mp.logger.Sublogger(fmt.Sprintf("generation_%v", nextGenerationId))
+			generationLogger.Info("Module exited. Restarting")
 			mp.process = newProcessLifetime(nextGenerationId, generationLogger)
 			nextGenerationId++
 

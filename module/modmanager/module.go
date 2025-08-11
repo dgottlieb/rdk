@@ -39,6 +39,7 @@ type module struct {
 	cfg        config.Module
 	dataDir    string
 	process    pexec.ManagedProcess
+	processNew *moduleProcess
 	handles    modlib.HandlerMap
 	sharedConn rdkgrpc.SharedConn
 	client     pb.ModuleServiceClient
@@ -102,13 +103,30 @@ func (m *module) dial() error {
 	return nil
 }
 
+func (m *module) dialNew(conn *grpc.ClientConn) error {
+	fmt.Printf("DBG. Dialed with: %p\n", conn)
+	// Take the grpc over unix socket connection and add it to this `module`s `SharedConn`
+	// object. This `m.sharedConn` object is referenced by all resources/components. `Client`
+	// objects communicating with the module. If we're re-dialing after a restart, there may be
+	// existing resource `Client`s objects. Rather than recreating clients with new information, we
+	// choose to "swap out" the underlying connection object for those existing `Client`s.
+	//
+	// Resetting the `SharedConn` will also create a new WebRTC PeerConnection object. `dial`ing to
+	// a module is followed by doing a `ReadyRequest` `ReadyResponse` exchange. If that exchange
+	// contains a working WebRTC offer and answer, the PeerConnection will succeed in connecting. If
+	// there is an error exchanging offers and answers, the PeerConnection object will be nil'ed
+	// out.
+	m.sharedConn.ResetConn(rpc.GrpcOverHTTPClientConn{ClientConn: conn}, m.logger)
+	m.client = pb.NewModuleServiceClient(m.sharedConn.GrpcConn())
+	m.robotClient = robotpb.NewRobotServiceClient(m.sharedConn.GrpcConn())
+	return nil
+}
+
 // checkReady sends a `ReadyRequest` and waits for either a `ReadyResponse`, or a context
 // cancelation.
 func (m *module) checkReady(ctx context.Context, parentAddr string) error {
 	ctxTimeout, cancelFunc := context.WithTimeout(ctx, rutils.GetModuleStartupTimeout(m.logger))
 	defer cancelFunc()
-
-	m.logger.CInfow(ctx, "Waiting for module to respond to ready request", "module", m.cfg.Name)
 
 	req := &pb.ReadyRequest{ParentAddress: parentAddr}
 
@@ -119,12 +137,16 @@ func (m *module) checkReady(ctx context.Context, parentAddr string) error {
 		m.logger.CWarnw(ctx, "Unable to generate offer for module PeerConnection. Ignoring.", "err", err)
 	}
 
+	m.logger.CInfow(ctx, "Waiting for module to respond to ready request", "module", m.cfg.Name)
 	for {
 		// 5000 is an arbitrarily high number of attempts (context timeout should hit long before)
+		m.logger.Info("Doing ready")
 		resp, err := m.client.Ready(ctxTimeout, req, grpc_retry.WithMax(5000))
 		if err != nil {
 			return err
 		}
+
+		fmt.Printf("Ready received: %+v\n", resp)
 
 		if !resp.Ready {
 			// Module's can express that they are in a state:
@@ -277,7 +299,79 @@ func (m *module) startProcess(
 		}
 		break
 	}
+
 	return nil
+}
+
+func (m *module) startProcessNew(
+	ctx context.Context,
+	parentAddr string,
+	oue func(int) bool,
+	viamHomeDir string,
+	packagesDir string,
+) (<-chan ConnGeneration, error) {
+	var err error
+
+	tcpMode := m.tcpMode()
+	if tcpMode {
+		if addr, err := getAutomaticPort(); err != nil {
+			return nil, err
+		} else { //nolint:revive
+			m.addr = addr
+		}
+	} else {
+		// append a random alpha string to the module name while creating a socket address to avoid conflicts
+		// with old versions of the module.
+		if m.addr, err = modlib.CreateSocketAddress(
+			filepath.Dir(parentAddr), fmt.Sprintf("%s-%s", m.cfg.Name, utils.RandomAlphaString(5))); err != nil {
+			return nil, err
+		}
+		m.addr, err = rutils.CleanWindowsSocketPath(runtime.GOOS, m.addr)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Create STDOUT and STDERR loggers for the module and turn off log deduplication for
+	// both. Module output through these loggers may contain data like stack traces, which
+	// are repetitive but are not actually "noisy."
+	stdoutLogger := m.logger.Sublogger("StdOut")
+	stderrLogger := m.logger.Sublogger("StdErr")
+	stdoutLogger.NeverDeduplicate()
+	stderrLogger.NeverDeduplicate()
+
+	pconf := pexec.ProcessConfig{
+		ID:           m.cfg.Name,
+		Name:         m.cfg.ExePath,
+		Args:         []string{m.addr},
+		StdOutLogger: stdoutLogger,
+		StdErrLogger: stderrLogger,
+	}
+
+	// Start module process with supplied log level or "debug" if none is
+	// supplied and module manager has a DebugLevel logger.
+	if m.cfg.LogLevel != "" {
+		pconf.Args = append(pconf.Args, fmt.Sprintf(logLevelArgumentTemplate, m.cfg.LogLevel))
+	} else if m.logger.Level().Enabled(zapcore.DebugLevel) {
+		pconf.Args = append(pconf.Args, fmt.Sprintf(logLevelArgumentTemplate, "debug"))
+	}
+
+	if tcpMode {
+		pconf.Args = append(pconf.Args, "--tcp-mode")
+	}
+
+	m.processNew = NewModuleProcess(pconf, m.logger) //pexec.NewManagedProcess(pconf, m.logger)
+
+	connCh, err := m.processNew.Start() //m.process.Start(context.Background())
+	if err != nil {
+		return nil, errors.WithMessage(err, "module startup failed")
+	}
+
+	// Turn on process cpu/memory diagnostics for the module process. If there's an error, we
+	// continue normally, just without FTDC.
+	m.registerProcessWithFTDC()
+
+	return connCh, nil
 }
 
 func (m *module) stopProcess() error {
@@ -324,6 +418,15 @@ func (m *module) killProcessGroup() {
 	}
 	m.logger.Infof("Killing module: %s process", m.cfg.Name)
 	m.process.KillGroup()
+}
+
+func (m *module) killProcessGroupNew() {
+	if m.process == nil {
+		return
+	}
+	m.logger.Infof("Killing module: %s process", m.cfg.Name)
+	// m.process.KillGroup()
+	m.processNew.process.Stop()
 }
 
 func (m *module) registerResourceModels(mgr *Manager) {
@@ -403,7 +506,7 @@ func (m *module) getFullEnvironment(viamHomeDir string) map[string]string {
 }
 
 func (m *module) getFTDCName() string {
-	return fmt.Sprintf("proc.modules.%s", m.process.ID())
+	return fmt.Sprintf("proc.modules.%s", m.cfg.Name)
 }
 
 func (m *module) registerProcessWithFTDC() {
@@ -414,6 +517,26 @@ func (m *module) registerProcessWithFTDC() {
 	pid, err := m.process.UnixPid()
 	if err != nil {
 		m.logger.Warnw("Module process has no pid. Cannot start ftdc.", "err", err)
+		return
+	}
+
+	statser, err := sys.NewSysUsageStatser(pid)
+	if err != nil {
+		m.logger.Warnw("Cannot start a system statser for module with pid", "pid", pid, "err", err)
+		return
+	}
+
+	m.ftdc.Add(m.getFTDCName(), statser)
+}
+
+func (m *module) registerProcessWithFTDCNew() {
+	if m.ftdc == nil {
+		return
+	}
+
+	pid := m.processNew.process.cmd.Process.Pid
+	if pid <= 0 {
+		m.logger.Warnw("Module process has no pid. Cannot start ftdc.", "pid", pid)
 		return
 	}
 
