@@ -67,6 +67,7 @@ func (m *module) dial() error {
 	if !rutils.TCPRegex.MatchString(addrToDial) {
 		addrToDial = "unix:" + addrToDial
 	}
+
 	//nolint:staticcheck
 	conn, err := grpc.Dial(
 		addrToDial,
@@ -104,7 +105,6 @@ func (m *module) dial() error {
 }
 
 func (m *module) dialNew(conn *grpc.ClientConn) error {
-	fmt.Printf("DBG. Dialed with: %p\n", conn)
 	// Take the grpc over unix socket connection and add it to this `module`s `SharedConn`
 	// object. This `m.sharedConn` object is referenced by all resources/components. `Client`
 	// objects communicating with the module. If we're re-dialing after a restart, there may be
@@ -145,8 +145,6 @@ func (m *module) checkReady(ctx context.Context, parentAddr string) error {
 		if err != nil {
 			return err
 		}
-
-		fmt.Printf("Ready received: %+v\n", resp)
 
 		if !resp.Ready {
 			// Module's can express that they are in a state:

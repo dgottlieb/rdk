@@ -73,7 +73,7 @@ func (pl *processLifetime) Start(socketFilename string, conf pexec.ProcessConfig
 			pl.logger.Infow("Socket owned", "file", socketFilename)
 			// conn, err := net.Dial("unix", socketFilename)
 			conn, err := grpc.Dial(
-				socketFilename,
+				fmt.Sprintf("unix:%v", socketFilename),
 				grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(rpc.MaxMessageSize)),
 				grpc.WithTransportCredentials(insecure.NewCredentials()),
 				grpc.WithChainUnaryInterceptor(
