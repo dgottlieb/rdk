@@ -979,6 +979,7 @@ func (mgr *Manager) attemptRestart(ctx context.Context, mod *module) error {
 		return mgr.newOnUnexpectedExitHandler(ctx, mod)(exitCode)
 	}
 
+	// Start process. Wait for unix socket to be opened.
 	if err := mgr.startModuleProcess(mod, oue); err != nil {
 		mgr.logger.Errorw("Error while restarting crashed module",
 			"module", mod.cfg.Name, "error", err)
@@ -986,18 +987,22 @@ func (mgr *Manager) attemptRestart(ctx context.Context, mod *module) error {
 	}
 	processRestarted = true
 
+	// Create a grpc connection. Set/Replace it on the `SharedConn`.
 	if err := mod.dial(); err != nil {
 		mgr.logger.CErrorw(ctx, "Error while dialing restarted module",
 			"module", mod.cfg.Name, "error", err)
 		return err
 	}
 
+	// Send the ready request/wait for the ready response. Create a peer connection + set it on the
+	// `SharedConn` if negotiated.
 	if err := mod.checkReady(ctx, mgr.parentAddr(mod)); err != nil {
 		mgr.logger.CErrorw(ctx, "Error while waiting for restarted module to be ready",
 			"module", mod.cfg.Name, "error", err)
 		return err
 	}
 
+	// Add modname -> peerconnection mapping for incoming video streams.
 	if pc := mod.sharedConn.PeerConn(); mgr.modPeerConnTracker != nil && pc != nil {
 		mgr.modPeerConnTracker.Add(mod.cfg.Name, pc)
 	}
