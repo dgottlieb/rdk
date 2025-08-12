@@ -258,7 +258,7 @@ func (m *module) startProcess(
 
 	// Turn on process cpu/memory diagnostics for the module process. If there's an error, we
 	// continue normally, just without FTDC.
-	if true {
+	if NewProcessCode {
 		m.registerProcessWithFTDCNew()
 	} else {
 		m.registerProcessWithFTDC()
@@ -398,7 +398,7 @@ func (m *module) stopProcess() error {
 		}
 	}()
 
-	if true {
+	if NewProcessCode {
 		m.processNew.Stop()
 	} else {
 		// TODO(RSDK-2551): stop ignoring exit status 143 once Python modules handle
@@ -478,6 +478,7 @@ func (m *module) registerResourceModels(mgr *Manager) {
 func (m *module) deregisterResourceModels() {
 	for api, models := range m.handles {
 		for _, model := range models {
+			fmt.Println("DBG. Deregistering:", api.API, model)
 			resource.Deregister(api.API, model)
 		}
 	}

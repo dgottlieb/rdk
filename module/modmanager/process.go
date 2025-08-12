@@ -125,7 +125,9 @@ func (mp *moduleProcess) Stop() error {
 
 	// Inform the `moduleProcess` owner that there will be no more connections to the module
 	// process.
+	mp.logger.Info("Closed channel:", mp.conf.ID, mp.conf.Name)
 	close(mp.connCh)
+	// debug.PrintStack()
 
 	// Wait on the process restart goroutine to exit.
 	mp.wg.Wait()

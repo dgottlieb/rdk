@@ -29,6 +29,8 @@ import (
 	rutils "go.viam.com/rdk/utils"
 )
 
+const NewProcessCode = true
+
 var (
 	validateConfigTimeout       = 5 * time.Second
 	errMessageExitStatus143     = "exit status 143"
@@ -178,7 +180,7 @@ func (mgr *Manager) Kill() {
 	// sync.Map's Range does not block other methods on the map;
 	// even f itself may call any method on the map.
 	mgr.modules.Range(func(_ string, mod *module) bool {
-		if true {
+		if NewProcessCode {
 			mod.killProcessGroupNew()
 			return true
 		}
@@ -230,7 +232,7 @@ func checkIfAllowed(confs ...config.Module) (
 // Each module configuration should have a unique name - if duplicate names are detected,
 // then only the first duplicate instance will be processed and the rest will be ignored.
 func (mgr *Manager) Add(ctx context.Context, confs ...config.Module) error {
-	if true {
+	if NewProcessCode {
 		return mgr.AddNew(ctx, confs...)
 	}
 
@@ -431,14 +433,26 @@ func (mgr *Manager) Reconfigure(ctx context.Context, conf config.Module) ([]reso
 		return handledResourceNames, err
 	}
 
-	mod.cfg = conf
-	mod.resources = map[resource.Name]*addedResource{}
+	if NewProcessCode {
+		mgr.modules.Delete(conf.Name)
+		mgr.addNew(ctx, conf, mgr.logger.Sublogger(conf.Name))
+	} else {
+		mod.cfg = conf
+		mod.resources = map[resource.Name]*addedResource{}
+	}
 
 	mod.logger.CInfow(ctx, "Existing module process stopped. Starting new module process", "module", conf.Name)
 
-	if err := mgr.startModule(ctx, mod); err != nil {
-		// If re-addition fails, assume all handled resources are orphaned.
-		return handledResourceNames, err
+	if NewProcessCode {
+		if err := mgr.startModuleNew(ctx, mod); err != nil {
+			// If re-addition fails, assume all handled resources are orphaned.
+			return handledResourceNames, err
+		}
+	} else {
+		if err := mgr.startModule(ctx, mod); err != nil {
+			// If re-addition fails, assume all handled resources are orphaned.
+			return handledResourceNames, err
+		}
 	}
 
 	mod.logger.CInfow(ctx, "New module process is running and responding to gRPC requests", "module",

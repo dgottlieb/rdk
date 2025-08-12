@@ -1737,6 +1737,7 @@ func TestOrphanedResources(t *testing.T) {
 		r.Reconfigure(ctx, cfg2)
 
 		res, err := r.ResourceByName(gizmoapi.Named("g"))
+		fmt.Println("DBG. FAILING")
 		test.That(t, err, test.ShouldBeError,
 			resource.NewNotAvailableError(
 				gizmoapi.Named("g"),
@@ -1744,6 +1745,7 @@ func TestOrphanedResources(t *testing.T) {
 			),
 		)
 		test.That(t, res, test.ShouldBeNil)
+
 		res, err = r.ResourceByName(summationapi.Named("s"))
 		test.That(t, err, test.ShouldBeError,
 			resource.NewNotAvailableError(
