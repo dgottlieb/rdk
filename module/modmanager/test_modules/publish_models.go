@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"go.viam.com/rdk/components/generic"
 	"go.viam.com/rdk/logging"
@@ -97,6 +98,11 @@ func (ps *publishSimple) Reconfigure(ctx context.Context, deps resource.Dependen
 
 // DoCommand sends/receives arbitrary data
 func (ps *publishSimple) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+	if _, exists := cmd["kill"]; exists {
+		ps.logger.Info("Kill command. Exiting.")
+		os.Exit(1)
+	}
+
 	return map[string]any{"command": "hello world"}, nil
 }
 

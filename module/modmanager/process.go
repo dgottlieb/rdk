@@ -50,7 +50,7 @@ func NewModuleProcess(conf pexec.ProcessConfig, logger logging.Logger) *modulePr
 // caller must only replace their connection handle if the next `ConnGeneration` has a higher
 // `Generation` number.
 func (mp *moduleProcess) Start() (<-chan ConnGeneration, error) {
-	const firstGenerationId = 0
+	const firstGenerationId = 1
 	generationLogger := mp.logger.Sublogger(fmt.Sprintf("generation_%v", firstGenerationId))
 	mp.process = newProcessLifetime(firstGenerationId, generationLogger)
 

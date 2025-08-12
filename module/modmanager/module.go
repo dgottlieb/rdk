@@ -104,7 +104,7 @@ func (m *module) dial() error {
 	return nil
 }
 
-func (m *module) dialNew(conn *grpc.ClientConn) error {
+func (m *module) dialNew(conn *grpc.ClientConn) {
 	// Take the grpc over unix socket connection and add it to this `module`s `SharedConn`
 	// object. This `m.sharedConn` object is referenced by all resources/components. `Client`
 	// objects communicating with the module. If we're re-dialing after a restart, there may be
@@ -119,7 +119,6 @@ func (m *module) dialNew(conn *grpc.ClientConn) error {
 	m.sharedConn.ResetConn(rpc.GrpcOverHTTPClientConn{ClientConn: conn}, m.logger)
 	m.client = pb.NewModuleServiceClient(m.sharedConn.GrpcConn())
 	m.robotClient = robotpb.NewRobotServiceClient(m.sharedConn.GrpcConn())
-	return nil
 }
 
 // checkReady sends a `ReadyRequest` and waits for either a `ReadyResponse`, or a context
@@ -140,7 +139,6 @@ func (m *module) checkReady(ctx context.Context, parentAddr string) error {
 	m.logger.CInfow(ctx, "Waiting for module to respond to ready request", "module", m.cfg.Name)
 	for {
 		// 5000 is an arbitrarily high number of attempts (context timeout should hit long before)
-		m.logger.Info("Doing ready")
 		resp, err := m.client.Ready(ctxTimeout, req, grpc_retry.WithMax(5000))
 		if err != nil {
 			return err
@@ -304,7 +302,6 @@ func (m *module) startProcess(
 func (m *module) startProcessNew(
 	ctx context.Context,
 	parentAddr string,
-	oue func(int) bool,
 	viamHomeDir string,
 	packagesDir string,
 ) (<-chan ConnGeneration, error) {

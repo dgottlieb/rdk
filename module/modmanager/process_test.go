@@ -10,12 +10,17 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	pb "go.viam.com/api/module/v1"
+	"go.viam.com/rdk/components/generic"
 	"go.viam.com/rdk/config"
 	"go.viam.com/rdk/logging"
 	modlib "go.viam.com/rdk/module"
+	modmanageroptions "go.viam.com/rdk/module/modmanager/options"
 	"go.viam.com/rdk/resource"
+	"go.viam.com/rdk/utils"
 	"go.viam.com/test"
 	"go.viam.com/utils/pexec"
+	"go.viam.com/utils/testutils"
 )
 
 func BuildTempModule(tb testing.TB, modFile string) string {
@@ -179,13 +184,10 @@ func TestModuleIntegration(t *testing.T) {
 	_, err = os.Stat(fileSocketPath)
 	test.That(t, os.IsNotExist(err), test.ShouldBeTrue)
 
-	// conns, err := mp.Start()
-	// test.That(t, err, test.ShouldBeNil)
-
 	connTimeout, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	conns, err := mod.startProcessNew(connTimeout, fileSocketPath, nil, "", "")
+	conns, err := mod.startProcessNew(connTimeout, fileSocketPath, "", "")
 	test.That(t, err, test.ShouldBeNil)
 
 	conn := <-conns
@@ -198,6 +200,91 @@ func TestModuleIntegration(t *testing.T) {
 	err = mod.checkReady(ctx, returnSocketPath)
 	test.That(t, err, test.ShouldBeNil)
 
+	confProto, err := config.ComponentConfigToProto(&resource.Config{
+		Name:      "shortName",
+		API:       generic.API,
+		Model:     resource.NewModel("rdk", "publish", "simple"),
+		DependsOn: []string{},
+		LogConfiguration: &resource.LogConfig{
+			Level: logging.DEBUG,
+		},
+		Attributes: make(utils.AttributeMap),
+	})
+	test.That(t, err, test.ShouldBeNil)
+
+	_, err = mod.client.AddResource(ctx, &pb.AddResourceRequest{Config: confProto, Dependencies: []string{}})
+	test.That(t, err, test.ShouldBeNil)
+
+	resClient, err := generic.NewClientFromConn(
+		ctx,
+		&mod.sharedConn,
+		"",
+		resource.Name{
+			API:    generic.API,
+			Remote: "",
+			Name:   "shortName",
+		},
+		logger.Sublogger("shortNameClient"),
+	)
+	test.That(t, err, test.ShouldBeNil)
+
+	res, err := resClient.DoCommand(ctx, map[string]any{})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, res["command"].(string), test.ShouldEqual, "hello world")
+
 	mod.killProcessGroupNew()
 	test.That(t, mod.processNew.exitCode(), test.ShouldEqual, 0)
+}
+
+func TestModManagerIntegration(t *testing.T) {
+	ctx := context.Background()
+	logger := logging.NewTestLogger(t)
+	programPath := BuildTempModule(t, fmt.Sprintf("./test_modules/publish_models.go"))
+
+	returnSocketPath := setupSocketWithRobot(t)
+	viamHomeTemp := t.TempDir()
+	modmanager := setupModManager(t, ctx, returnSocketPath, logger.Sublogger("modmanager"),
+		modmanageroptions.Options{UntrustedEnv: false, ViamHomeDir: viamHomeTemp})
+	defer modmanager.Close(ctx)
+
+	err := modmanager.AddNew(ctx, config.Module{
+		Name:     "publish_modules",
+		ExePath:  programPath,
+		LogLevel: "debug",
+		Type:     "local",
+		TCPMode:  false,
+	})
+	test.That(t, err, test.ShouldBeNil)
+
+	res, err := modmanager.AddResource(ctx,
+		resource.Config{
+			Name:      "shortName",
+			API:       generic.API,
+			Model:     resource.NewModel("rdk", "publish", "simple"),
+			DependsOn: []string{},
+			LogConfiguration: &resource.LogConfig{
+				Level: logging.DEBUG,
+			},
+			Attributes: make(utils.AttributeMap),
+		},
+		[]string{},
+	)
+	test.That(t, err, test.ShouldBeNil)
+
+	resp, err := res.DoCommand(ctx, map[string]any{})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["command"].(string), test.ShouldEqual, "hello world")
+
+	resp, err = res.DoCommand(ctx, map[string]any{"kill": true})
+	test.That(t, err, test.ShouldNotBeNil)
+
+	testutils.WaitForAssertion(t, func(tb testing.TB) {
+		resp, err = res.DoCommand(ctx, map[string]any{})
+		test.That(tb, err, test.ShouldBeNil)
+		// All assertions in a `WaitForAssertion` are executed. Explicitly check for avoid a bad map
+		// access/value type assertion.
+		if err == nil {
+			test.That(tb, resp["command"].(string), test.ShouldEqual, "hello world")
+		}
+	})
 }

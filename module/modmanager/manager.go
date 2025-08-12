@@ -713,14 +713,17 @@ func (mgr *Manager) ResolveImplicitDependenciesInConfig(ctx context.Context, con
 			}
 		}
 	}
+
 	if conf.Added != nil {
 		validateModularResources(conf.Added.Components)
 		validateModularResources(conf.Added.Services)
 	}
+
 	if conf.Modified != nil {
 		validateModularResources(conf.Modified.Components)
 		validateModularResources(conf.Modified.Services)
 	}
+
 	return nil
 }
 
