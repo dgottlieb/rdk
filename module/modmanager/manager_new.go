@@ -87,6 +87,11 @@ func (mgr *Manager) startModuleNew(ctx context.Context, mod *module) error {
 					return
 				}
 
+				if connGen.Generation == -1 {
+					mod.cleanupAfterCrash(mgr)
+					continue
+				}
+
 				fmt.Println("OldGen:", latestConnGen.Generation, "NewGen:", connGen.Generation)
 				if connGen.Generation > latestConnGen.Generation {
 					latestConnGen = connGen

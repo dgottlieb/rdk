@@ -77,6 +77,7 @@ func (mp *moduleProcess) Start() (<-chan ConnGeneration, error) {
 
 			generationLogger = mp.logger.Sublogger(fmt.Sprintf("generation_%v", nextGenerationId))
 			generationLogger.Info("Module exited. Restarting")
+			mp.connCh <- ConnGeneration{Generation: -1}
 			mp.process = newProcessLifetime(nextGenerationId, generationLogger)
 			nextGenerationId++
 

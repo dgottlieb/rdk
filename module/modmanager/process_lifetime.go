@@ -16,6 +16,7 @@ import (
 	rdkgrpc "go.viam.com/rdk/grpc"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/operation"
+	rutils "go.viam.com/rdk/utils"
 	"go.viam.com/utils"
 	"go.viam.com/utils/pexec"
 	"go.viam.com/utils/rpc"
@@ -70,10 +71,15 @@ func (pl *processLifetime) Start(socketFilename string, conf pexec.ProcessConfig
 				continue
 			}
 
+			addrToDial := socketFilename
+			if !rutils.TCPRegex.MatchString(addrToDial) {
+				addrToDial = "unix:" + addrToDial
+			}
+
 			pl.logger.Infow("Socket owned", "file", socketFilename)
 			// conn, err := net.Dial("unix", socketFilename)
 			conn, err := grpc.Dial(
-				fmt.Sprintf("unix:%v", socketFilename),
+				addrToDial,
 				grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(rpc.MaxMessageSize)),
 				grpc.WithTransportCredentials(insecure.NewCredentials()),
 				grpc.WithChainUnaryInterceptor(
@@ -101,6 +107,7 @@ func (pl *processLifetime) Start(socketFilename string, conf pexec.ProcessConfig
 	pl.cmd = exec.Command(conf.Name, conf.Args...)
 	stdout, err := pl.cmd.StdoutPipe()
 	if err != nil {
+		pl.workers.Stop()
 		return err
 	}
 
@@ -126,6 +133,7 @@ func (pl *processLifetime) Start(socketFilename string, conf pexec.ProcessConfig
 
 	stderr, err := pl.cmd.StderrPipe()
 	if err != nil {
+		pl.workers.Stop()
 		return err
 	}
 	pl.workers.Add(func(ctx context.Context) {
@@ -149,7 +157,8 @@ func (pl *processLifetime) Start(socketFilename string, conf pexec.ProcessConfig
 	})
 
 	if startErr := pl.cmd.Start(); startErr != nil {
-		pl.Stop()
+		pl.logger.Warn("Error while restarting crashed module")
+		pl.workers.Stop()
 		return startErr
 	}
 
@@ -181,6 +190,11 @@ func (pl *processLifetime) wait() error {
 
 // Stop returns an error if the process may still be running. Stop is idempotent.
 func (pl *processLifetime) Stop() error {
+	if pl.cmd.Process == nil {
+		pl.workers.Stop()
+		return nil
+	}
+
 	// Send a signal to the program.
 	pl.cmd.Process.Signal(syscall.SIGTERM)
 

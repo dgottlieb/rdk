@@ -258,7 +258,11 @@ func (m *module) startProcess(
 
 	// Turn on process cpu/memory diagnostics for the module process. If there's an error, we
 	// continue normally, just without FTDC.
-	m.registerProcessWithFTDC()
+	if true {
+		m.registerProcessWithFTDCNew()
+	} else {
+		m.registerProcessWithFTDC()
+	}
 
 	checkTicker := time.NewTicker(100 * time.Millisecond)
 	defer checkTicker.Stop()
@@ -370,7 +374,7 @@ func (m *module) startProcessNew(
 }
 
 func (m *module) stopProcess() error {
-	if m.process == nil {
+	if m.process == nil && m.processNew == nil {
 		return nil
 	}
 
@@ -394,14 +398,18 @@ func (m *module) stopProcess() error {
 		}
 	}()
 
-	// TODO(RSDK-2551): stop ignoring exit status 143 once Python modules handle
-	// SIGTERM correctly.
-	// Also ignore if error is that the process no longer exists.
-	if err := m.process.Stop(); err != nil {
-		if strings.Contains(err.Error(), errMessageExitStatus143) || strings.Contains(err.Error(), "no such process") {
-			return nil
+	if true {
+		m.processNew.Stop()
+	} else {
+		// TODO(RSDK-2551): stop ignoring exit status 143 once Python modules handle
+		// SIGTERM correctly.
+		// Also ignore if error is that the process no longer exists.
+		if err := m.process.Stop(); err != nil {
+			if strings.Contains(err.Error(), errMessageExitStatus143) || strings.Contains(err.Error(), "no such process") {
+				return nil
+			}
+			return err
 		}
-		return err
 	}
 
 	return nil

@@ -178,6 +178,11 @@ func (mgr *Manager) Kill() {
 	// sync.Map's Range does not block other methods on the map;
 	// even f itself may call any method on the map.
 	mgr.modules.Range(func(_ string, mod *module) bool {
+		if true {
+			mod.killProcessGroupNew()
+			return true
+		}
+
 		mod.killProcessGroup()
 		return true
 	})
@@ -225,6 +230,10 @@ func checkIfAllowed(confs ...config.Module) (
 // Each module configuration should have a unique name - if duplicate names are detected,
 // then only the first duplicate instance will be processed and the rest will be ignored.
 func (mgr *Manager) Add(ctx context.Context, confs ...config.Module) error {
+	if true {
+		return mgr.AddNew(ctx, confs...)
+	}
+
 	mgr.mu.Lock()
 	defer mgr.mu.Unlock()
 
