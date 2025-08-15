@@ -781,6 +781,7 @@ func (r *localRobot) newResource(
 	}()
 	resName := conf.ResourceName()
 	resInfo, ok := resource.LookupRegistration(resName.API, conf.Model)
+	r.logger.Infof("DBG. Name: %v API: %v Model: %v Found? %v", resName.Name, resName.API, conf.Model, ok)
 	if !ok {
 		return nil, errors.Errorf("unknown resource type: API %q with model %q not registered", resName.API, conf.Model)
 	}

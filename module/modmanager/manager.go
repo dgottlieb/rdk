@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -29,7 +30,7 @@ import (
 	rutils "go.viam.com/rdk/utils"
 )
 
-const NewProcessCode = true
+const NewProcessCode = false
 
 var (
 	validateConfigTimeout       = 5 * time.Second
@@ -406,6 +407,9 @@ func (mgr *Manager) startModule(ctx context.Context, mod *module) error {
 // Reconfigure reconfigures an existing resource module and returns the names of resources previously
 // handled by the module.
 func (mgr *Manager) Reconfigure(ctx context.Context, conf config.Module) ([]resource.Name, error) {
+	if conf.Name == "mod" {
+		debug.PrintStack()
+	}
 	mgr.mu.Lock()
 	defer mgr.mu.Unlock()
 	mod, exists := mgr.modules.Load(conf.Name)
@@ -435,7 +439,15 @@ func (mgr *Manager) Reconfigure(ctx context.Context, conf config.Module) ([]reso
 
 	if NewProcessCode {
 		mgr.modules.Delete(conf.Name)
-		mgr.addNew(ctx, conf, mgr.logger.Sublogger(conf.Name))
+		if err := mgr.addNew(ctx, conf, mgr.logger.Sublogger(conf.Name)); err != nil {
+			return handledResourceNames, err
+		}
+
+		var ok bool
+		mod, ok = mgr.modules.Load(conf.Name)
+		if !ok {
+			panic("Module not added")
+		}
 	} else {
 		mod.cfg = conf
 		mod.resources = map[resource.Name]*addedResource{}
@@ -444,10 +456,7 @@ func (mgr *Manager) Reconfigure(ctx context.Context, conf config.Module) ([]reso
 	mod.logger.CInfow(ctx, "Existing module process stopped. Starting new module process", "module", conf.Name)
 
 	if NewProcessCode {
-		if err := mgr.startModuleNew(ctx, mod); err != nil {
-			// If re-addition fails, assume all handled resources are orphaned.
-			return handledResourceNames, err
-		}
+		// Delete -> addNew already restarted the module.
 	} else {
 		if err := mgr.startModule(ctx, mod); err != nil {
 			// If re-addition fails, assume all handled resources are orphaned.
@@ -846,6 +855,7 @@ var oueRestartInterval = 5 * time.Second
 // for the passed-in module to include in the pexec.ProcessConfig.
 func (mgr *Manager) newOnUnexpectedExitHandler(ctx context.Context, mod *module) pexec.UnexpectedExitHandler {
 	return func(exitCode int) (continueAttemptingRestart bool) {
+		debug.PrintStack()
 		// Log error immediately, as this is unexpected behavior.
 		mod.logger.Errorw(
 			"Module has unexpectedly exited.", "module", mod.cfg.Name, "exit_code", exitCode,
@@ -908,6 +918,7 @@ func (mgr *Manager) newOnUnexpectedExitHandler(ctx context.Context, mod *module)
 
 		var orphanedResourceNames []resource.Name
 		var restoredResourceNamesStr []string
+		mod.logger.Info("DBG. Resources to re-add:", mod.resources)
 		for name, res := range mod.resources {
 			confProto, err := config.ComponentConfigToProto(&res.conf)
 			if err != nil {
@@ -1035,6 +1046,7 @@ func (mgr *Manager) attemptRestart(ctx context.Context, mod *module) error {
 		mgr.modPeerConnTracker.Add(mod.cfg.Name, pc)
 	}
 	mod.registerResourceModels(mgr)
+	debug.PrintStack()
 	success = true
 	return nil
 }

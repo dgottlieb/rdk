@@ -46,6 +46,7 @@ func (mgr *Manager) addNew(ctx context.Context, conf config.Module, moduleLogger
 		logger:    moduleLogger,
 		ftdc:      mgr.ftdc,
 	}
+	mod.shutdownCtx, mod.restartCancel = context.WithCancel(mgr.restartCtx)
 
 	if err := mgr.startModuleNew(ctx, mod); err != nil {
 		return err
@@ -92,7 +93,6 @@ func (mgr *Manager) startModuleNew(ctx context.Context, mod *module) error {
 					continue
 				}
 
-				fmt.Println("OldGen:", latestConnGen.Generation, "NewGen:", connGen.Generation)
 				if connGen.Generation > latestConnGen.Generation {
 					latestConnGen = connGen
 				}
@@ -126,19 +126,38 @@ func (mgr *Manager) startModuleNew(ctx context.Context, mod *module) error {
 		}
 	}()
 
+	startupTimeout := rutils.GetModuleStartupTimeout(mod.logger)
+	ctxTimeout, cancelFunc := context.WithTimeout(ctx, startupTimeout)
+	defer cancelFunc()
+
 	select {
 	case <-firstLoadCh:
 		break
+	case <-ctxTimeout.Done():
+		err = fmt.Errorf("Module startup timed out. Timeout: %v", startupTimeout)
 	case <-mgr.restartCtx.Done():
-		break
+		err = errors.New("Modmanager stopped. Module startup interrupted.")
+	}
+
+	if err != nil {
+		mod.restartCancel()
+		mod.stopProcess()
+		return err
 	}
 
 	return nil
 }
 
 func (mgr *Manager) readdResources(mod *module) {
+	mod.resourcesMu.Lock()
+	defer mod.resourcesMu.Unlock()
+	if len(mod.resources) == 0 {
+		return
+	}
+
 	var orphanedResourceNames []resource.Name
 	var restoredResourceNamesStr []string
+	mod.logger.Info("DBG. Resources to re-add:", mod.resources)
 	for name, res := range mod.resources {
 		confProto, err := config.ComponentConfigToProto(&res.conf)
 		if err != nil {

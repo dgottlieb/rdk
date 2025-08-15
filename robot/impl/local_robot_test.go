@@ -1734,6 +1734,7 @@ func TestOrphanedResources(t *testing.T) {
 				},
 			},
 		}
+		fmt.Println("DBG. Reconfiguring away module")
 		r.Reconfigure(ctx, cfg2)
 
 		res, err := r.ResourceByName(gizmoapi.Named("g"))
@@ -2302,22 +2303,26 @@ func TestCrashedModuleReconfigure(t *testing.T) {
 	t.Run("reconfiguration timeout", func(t *testing.T) {
 		// Lower timeouts to avoid waiting for 60 seconds for reconfig and module.
 		defer func() {
-			test.That(t, os.Unsetenv(rutils.ResourceConfigurationTimeoutEnvVar),
-				test.ShouldBeNil)
+			// test.That(t, os.Unsetenv(rutils.ResourceConfigurationTimeoutEnvVar),
+			//  	test.ShouldBeNil)
 			test.That(t, os.Unsetenv(rutils.ModuleStartupTimeoutEnvVar),
 				test.ShouldBeNil)
 		}()
-		t.Setenv(rutils.ResourceConfigurationTimeoutEnvVar, "500ms")
+		// t.Setenv(rutils.ResourceConfigurationTimeoutEnvVar, "500ms")
 		t.Setenv(rutils.ModuleStartupTimeoutEnvVar, "500ms")
 
 		// Reconfigure module to a malformed module (does not start listening).
 		// Assert that "h" is removed after reconfiguration error.
 		cfg.Modules[0].ExePath = rutils.ResolveFile("module/testmodule/fakemodule.sh")
+		start := time.Now()
+		fmt.Println("DBG. Reconfiguring", start)
 		r.Reconfigure(ctx, cfg)
+		fmt.Println("DBG. Reconfiguring finished", time.Since(start))
 
 		testutils.WaitForAssertion(t, func(tb testing.TB) {
 			test.That(t, logs.FilterMessage("error reconfiguring module").Len(), test.ShouldEqual, 1)
 		})
+		fmt.Println("DBG. Assertion found")
 
 		_, err = r.ResourceByName(generic.Named("h"))
 		test.That(t, err, test.ShouldNotBeNil)
@@ -2388,6 +2393,7 @@ func TestModularResourceReconfigurationCount(t *testing.T) {
 	test.That(t, resp, test.ShouldNotBeNil)
 	test.That(t, resp["num_reconfigurations"], test.ShouldEqual, 0)
 
+	// Add the `debug` level to the module's config
 	cfg2 := &config.Config{
 		Modules: []config.Module{
 			{
@@ -2411,7 +2417,10 @@ func TestModularResourceReconfigurationCount(t *testing.T) {
 			},
 		},
 	}
+	fmt.Println("DBG. Reconfiguring with debug flag")
+	// Reconfiguring restarts the module.
 	r.Reconfigure(ctx, cfg2)
+	fmt.Println("DBG. Reconfigure done")
 
 	// Assert that helper and other have still not `Reconfigure`d after their
 	// module did (only constructed in the restarted module).

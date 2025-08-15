@@ -53,6 +53,7 @@ type module struct {
 
 	// pendingRemoval allows delaying module close until after resources within it are closed
 	pendingRemoval bool
+	shutdownCtx    context.Context
 	restartCancel  context.CancelFunc
 
 	logger logging.Logger

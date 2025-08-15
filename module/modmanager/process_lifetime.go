@@ -104,6 +104,7 @@ func (pl *processLifetime) Start(socketFilename string, conf pexec.ProcessConfig
 		}
 	})
 
+	pl.logger.Info("DBG. Launching:", conf.Name)
 	pl.cmd = exec.Command(conf.Name, conf.Args...)
 	stdout, err := pl.cmd.StdoutPipe()
 	if err != nil {
