@@ -30,7 +30,7 @@ import (
 	rutils "go.viam.com/rdk/utils"
 )
 
-const NewProcessCode = false
+const NewProcessCode = true
 
 var (
 	validateConfigTimeout       = 5 * time.Second

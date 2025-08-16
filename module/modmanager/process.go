@@ -72,8 +72,12 @@ func (mp *moduleProcess) Start() (<-chan ConnGeneration, error) {
 			mp.restartMu.Lock()
 			if !mp.isAlive {
 				mp.restartMu.Unlock()
+				generationLogger.Info("Restart context canceled, abandoning restart attempt")
 				return
 			}
+
+			generationLogger.Errorw("Module has unexpectedly exited.",
+				"module", "unknown", "exit_code", mp.process.cmd.ProcessState.ExitCode)
 
 			generationLogger = mp.logger.Sublogger(fmt.Sprintf("generation_%v", nextGenerationId))
 			generationLogger.Info("Module exited. Restarting")
