@@ -118,6 +118,7 @@ type solutionSolvingState struct {
 	failures     *IkConstraintError
 
 	solutions         []*node
+	failedSolutions   []*node
 	startTime         time.Time
 	bestScore         float64
 	ikTimeMultiple    int
@@ -130,6 +131,7 @@ func newSolutionSolvingState(psc *planSegmentContext) (*solutionSolvingState, er
 	sss := &solutionSolvingState{
 		psc:               psc,
 		solutions:         []*node{},
+		failedSolutions:   []*node{},
 		failures:          newIkConstraintError(psc.pc.fs, psc.checker),
 		startTime:         time.Now(),
 		firstSolutionTime: time.Hour,

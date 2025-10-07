@@ -21,17 +21,19 @@ type planContext struct {
 	request                   *PlanRequest
 
 	randseed *rand.Rand
+	planMeta *PlanMeta
 
 	logger logging.Logger
 }
 
-func newPlanContext(logger logging.Logger, request *PlanRequest) (*planContext, error) {
+func newPlanContext(logger logging.Logger, request *PlanRequest, planMeta *PlanMeta) (*planContext, error) {
 	pc := &planContext{
 		fs:                        request.FrameSystem,
 		configurationDistanceFunc: motionplan.GetConfigurationDistanceFunc(request.PlannerOptions.ConfigurationDistanceMetric),
 		planOpts:                  request.PlannerOptions,
 		request:                   request,
 		randseed:                  rand.New(rand.NewSource(int64(request.PlannerOptions.RandomSeed))), //nolint:gosec
+		planMeta:                  planMeta,
 		logger:                    logger,
 	}
 
