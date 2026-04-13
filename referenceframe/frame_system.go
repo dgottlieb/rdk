@@ -41,6 +41,7 @@ type FrameSystem struct {
 	name           string
 	world          Frame // separate from the map of frames so it can be detached easily
 	frames         map[string]Frame
+	internalFrames map[string]Frame
 	parents        map[string]string
 	cachedBFSNames []string
 }
@@ -48,13 +49,14 @@ type FrameSystem struct {
 // NewEmptyFrameSystem creates a graph of Frames that have.
 func NewEmptyFrameSystem(name string) *FrameSystem {
 	worldFrame := NewZeroStaticFrame(World)
-	return &FrameSystem{name, worldFrame, map[string]Frame{}, map[string]string{}, []string{}}
+	return &FrameSystem{name, worldFrame, map[string]Frame{}, map[string]Frame{}, map[string]string{}, []string{}}
 }
 
 // NewFrameSystem assembles a frame system from a set of parts and additional transforms.
 func NewFrameSystem(name string, parts []*FrameSystemPart, additionalTransforms []*LinkInFrame) (*FrameSystem, error) {
 	allParts := make([]*FrameSystemPart, 0, len(parts)+len(additionalTransforms))
 	allParts = append(allParts, parts...)
+
 	for _, tf := range additionalTransforms {
 		transformPart, err := LinkInFrameToFrameSystemPart(tf)
 		if err != nil {
@@ -105,13 +107,13 @@ func NewFrameSystem(name string, parts []*FrameSystemPart, additionalTransforms 
 			return nil, err
 		}
 		// attach static offset frame to parent, attach model frame to static offset frame
-		if err = fs.AddFrame(staticOffsetFrame, fs.Frame(part.FrameConfig.Parent())); err != nil {
-			return nil, err
-		}
-		if err = fs.AddFrame(modelFrame, staticOffsetFrame); err != nil {
-			return nil, err
-		}
+		fs.frames[staticOffsetFrame.Name()] = staticOffsetFrame
+		fs.parents[staticOffsetFrame.Name()] = part.FrameConfig.Parent()
+
+		fs.frames[modelFrame.Name()] = modelFrame
+		fs.parents[modelFrame.Name()] = staticOffsetFrame.Name()
 	}
+	fs.cachedBFSNames = bfsFrameNames(fs)
 
 	return fs, nil
 }
@@ -339,7 +341,7 @@ func (sfs *FrameSystem) MergeFrameSystem(systemToMerge *FrameSystem, attachTo Fr
 // at the given frame and containing all descendents of it. The original frame system is unchanged.
 func (sfs *FrameSystem) FrameSystemSubset(newRoot Frame) (*FrameSystem, error) {
 	newWorld := NewZeroStaticFrame(World)
-	newFS := &FrameSystem{newRoot.Name() + "_FS", newWorld, map[string]Frame{}, map[string]string{}, nil}
+	newFS := &FrameSystem{newRoot.Name() + "_FS", newWorld, map[string]Frame{}, map[string]Frame{}, map[string]string{}, nil}
 
 	rootFrame := sfs.Frame(newRoot.Name())
 	if rootFrame == nil {

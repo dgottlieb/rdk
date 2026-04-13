@@ -132,6 +132,10 @@ func NewLinkInFrame(frame string, pose spatialmath.Pose, name string, geometry s
 	}
 }
 
+func (lf *LinkInFrame) String() string {
+	return fmt.Sprintf("PoseInFrame: %v Geometry: %+v", lf.PoseInFrame, lf.geometry)
+}
+
 // Geometry returns the Geometry of the LinkInFrame.
 func (lF *LinkInFrame) Geometry() spatialmath.Geometry {
 	return lF.geometry
