@@ -7,6 +7,7 @@ import (
 	"github.com/golang/geo/r3"
 	"go.viam.com/test"
 
+	"go.viam.com/rdk/logging"
 	spatial "go.viam.com/rdk/spatialmath"
 )
 
@@ -313,6 +314,7 @@ func TestComplicatedFrameTransform(t *testing.T) {
 }
 
 func TestSystemSplitAndRejoin(t *testing.T) {
+	logger := logging.NewTestLogger(t)
 	// build the system
 	fs := NewEmptyFrameSystem("test")
 
@@ -341,13 +343,13 @@ func TestSystemSplitAndRejoin(t *testing.T) {
 	test.That(t, err, test.ShouldBeNil)
 
 	// complete fs
-	t.Logf("frames in fs: %v", fs.FrameNames())
+	logger.Infof("frames in fs: %v", fs.FrameNames())
 
 	// This should remove frames 3 and 4 from fs
 	fs2, err := fs.DivideFrameSystem(frame3)
 	test.That(t, err, test.ShouldBeNil)
-	t.Logf("frames in fs after divide: %v", fs.FrameNames())
-	t.Logf("frames in fs2 after divide: %v", fs2.FrameNames())
+	logger.Infof("frames in fs after divide: %v", fs.FrameNames())
+	logger.Infof("frames in fs2 after divide: %v", fs2.FrameNames())
 
 	f4 := fs.Frame("frame4")
 	test.That(t, f4, test.ShouldBeNil)
@@ -367,8 +369,8 @@ func TestSystemSplitAndRejoin(t *testing.T) {
 	test.That(t, err, test.ShouldBeNil)
 
 	// Comfirm that fs2 is empty now
-	t.Logf("frames in fs after merge: %v", fs.FrameNames())
-	t.Logf("frames in fs2 after merge: %v", fs2.FrameNames())
+	logger.Infof("frames in fs after merge: %v", fs.FrameNames())
+	logger.Infof("frames in fs2 after merge: %v", fs2.FrameNames())
 
 	// Confirm new combined frame system now works as it did before
 	poseStart := NewPoseInFrame("frame2", spatial.NewPoseFromPoint(r3.Vector{3, 0, 0})) // the point from PoV of frame 2
