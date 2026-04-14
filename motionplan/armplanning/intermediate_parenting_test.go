@@ -18,7 +18,6 @@ func TestPlanningWithIntermediateFrame(t *testing.T) {
 
 	// Load UR5e arm model
 	ur5e, err := referenceframe.ParseModelJSONFile(utils.ResolveFile("components/arm/fake/kinematics/ur5e.json"), "ur5e")
-	logger.Infof("Model: %T", ur5e)
 	test.That(t, err, test.ShouldBeNil)
 
 	// Build FS via NewFrameSystem so flattening occurs.
@@ -33,6 +32,15 @@ func TestPlanningWithIntermediateFrame(t *testing.T) {
 	}
 	fs, err := referenceframe.NewFrameSystem("test", parts, []*referenceframe.LinkInFrame{toolLIF})
 	test.That(t, err, test.ShouldBeNil)
+
+	logger.Info("Frames:")
+	for fname, _ := range fs.Frames() {
+		logger.Info("  ", fname)
+	}
+	logger.Info("Parents:")
+	for fname, parent := range fs.Parents() {
+		logger.Info("  ", fname, "->", parent)
+	}
 
 	// Start every joint at 0.5 rad.
 	startInputs := referenceframe.NewZeroInputs(fs)
@@ -50,12 +58,12 @@ func TestPlanningWithIntermediateFrame(t *testing.T) {
 	goalResult, err := fs.Transform(goalLI, toolPIF, referenceframe.World)
 	test.That(t, err, test.ShouldBeNil)
 	goalPose := goalResult.(*referenceframe.PoseInFrame).Pose()
-	t.Logf("tool at goal config: %v", goalPose.Point())
+	logger.Infof("tool at goal config: %v", goalPose.Point())
 
 	// Also log the start for comparison.
 	startResult, err := fs.Transform(startLI, toolPIF, referenceframe.World)
 	test.That(t, err, test.ShouldBeNil)
-	t.Logf("tool at start config: %v", startResult.(*referenceframe.PoseInFrame).Pose().Point())
+	logger.Infof("tool at start config: %v", startResult.(*referenceframe.PoseInFrame).Pose().Point())
 
 	goal := &PlanState{poses: referenceframe.FrameSystemPoses{
 		"tool": referenceframe.NewPoseInFrame(referenceframe.World, goalPose),

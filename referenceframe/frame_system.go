@@ -41,9 +41,17 @@ type FrameSystem struct {
 	name           string
 	world          Frame // separate from the map of frames so it can be detached easily
 	frames         map[string]Frame
-	internalFrames map[string]Frame
+	superFrames    map[string]Frame
 	parents        map[string]string
 	cachedBFSNames []string
+}
+
+func (fs *FrameSystem) Frames() map[string]Frame {
+	return fs.frames
+}
+
+func (fs *FrameSystem) Parents() map[string]string {
+	return fs.parents
 }
 
 // NewEmptyFrameSystem creates a graph of Frames that have.
@@ -54,58 +62,34 @@ func NewEmptyFrameSystem(name string) *FrameSystem {
 
 // NewFrameSystem assembles a frame system from a set of parts and additional transforms.
 func NewFrameSystem(name string, parts []*FrameSystemPart, additionalTransforms []*LinkInFrame) (*FrameSystem, error) {
-	allParts := make([]*FrameSystemPart, 0, len(parts)+len(additionalTransforms))
-	allParts = append(allParts, parts...)
-
-	for _, tf := range additionalTransforms {
-		transformPart, err := LinkInFrameToFrameSystemPart(tf)
-		if err != nil {
-			return nil, err
-		}
-		allParts = append(allParts, transformPart)
-	}
-
-	// ensure that at least one frame connects to world if the frame system is not empty
-	if len(allParts) != 0 {
-		hasWorld := false
-		for _, part := range allParts {
-			if part.FrameConfig.Parent() == World {
-				hasWorld = true
-				break
-			}
-		}
-		if !hasWorld {
-			return nil, ErrNoWorldConnection
-		}
-	}
-
-	// Topologically sort parts
-	sortedParts, unlinkedParts := TopologicallySortParts(allParts)
-	if len(unlinkedParts) > 0 {
-		strs := make([]string, len(unlinkedParts))
-		for idx, part := range unlinkedParts {
-			strs[idx] = part.FrameConfig.Name()
-		}
-
-		return nil, fmt.Errorf("Cannot construct frame system. Some parts are not linked to the world frame. Parts: %v",
-			strs)
-	}
-
-	if len(sortedParts) != len(allParts) {
-		return nil, errors.Errorf(
-			"frame system has disconnected frames. connected frames: %v, all frames: %v",
-			getPartNames(sortedParts),
-			getPartNames(allParts),
-		)
-	}
-
 	fs := NewEmptyFrameSystem(name)
-	for _, part := range sortedParts {
-		// make the frames from the configs
+	if len(parts)+len(additionalTransforms) == 0 {
+		return fs, nil
+	}
+
+	allPartParents := make(map[string]string)
+	for _, part := range parts {
+		if simpleModel, ok := part.ModelFrame.(*SimpleModel); ok {
+			for _, frame := range simpleModel.internalFS.frames {
+				fs.frames[frame.Name()] = frame
+				parent, err := simpleModel.internalFS.Parent(frame)
+				if err != nil {
+					return nil, fmt.Errorf("Model parent does not exist. Frame: %v Err: %w", frame, err)
+				}
+
+				fs.parents[frame.Name()] = parent.Name()
+				allPartParents[frame.Name()] = parent.Name()
+			}
+
+			continue
+		}
+
+		allPartParents[part.ModelFrame.Name()] = part.FrameConfig.Parent()
 		modelFrame, staticOffsetFrame, err := createFramesFromPart(part)
 		if err != nil {
 			return nil, err
 		}
+
 		// attach static offset frame to parent, attach model frame to static offset frame
 		fs.frames[staticOffsetFrame.Name()] = staticOffsetFrame
 		fs.parents[staticOffsetFrame.Name()] = part.FrameConfig.Parent()
@@ -114,6 +98,32 @@ func NewFrameSystem(name string, parts []*FrameSystemPart, additionalTransforms 
 		fs.parents[modelFrame.Name()] = staticOffsetFrame.Name()
 	}
 	fs.cachedBFSNames = bfsFrameNames(fs)
+
+	for _, tf := range additionalTransforms {
+		transformPart, err := LinkInFrameToFrameSystemPart(tf)
+		if err != nil {
+			return nil, err
+		}
+
+		modelFrame, staticOffsetFrame, err := createFramesFromPart(transformPart)
+		if err != nil {
+			return nil, err
+		}
+
+		// attach static offset frame to parent, attach model frame to static offset frame
+		fs.frames[staticOffsetFrame.Name()] = staticOffsetFrame
+		fs.parents[staticOffsetFrame.Name()] = transformPart.FrameConfig.Parent()
+
+		fs.frames[modelFrame.Name()] = modelFrame
+		fs.parents[modelFrame.Name()] = staticOffsetFrame.Name()
+	}
+
+	// Topologically sort parts
+	_, unlinkedParts := TopologicalSortRootedByWorld(allPartParents)
+	if len(unlinkedParts) > 0 {
+		return nil, fmt.Errorf("Cannot construct frame system. Some parts are not linked to the world frame. Parts: %v",
+			unlinkedParts)
+	}
 
 	return fs, nil
 }
@@ -924,6 +934,60 @@ func TopologicallySortParts(parts []*FrameSystemPart) ([]*FrameSystemPart, []*Fr
 	unlinkedParts := make([]*FrameSystemPart, 0, 4)
 	for _, part := range parts {
 		if !visited[part.FrameConfig.Name()] {
+			unlinkedParts = append(unlinkedParts, part)
+		}
+	}
+
+	return topoSortedParts, unlinkedParts
+}
+
+// TopologicalSortRootedByWorld partitions an input map of frames -> parents into a slice of frames
+// connected to the world in topological order and a slice of frames that are not connected to the
+// world.
+func TopologicalSortRootedByWorld(parents map[string]string) ([]string, []string) {
+	// set up directory to check existence of parents
+	partNameIndex := make(map[string]bool, len(parents))
+	partNameIndex[World] = true
+	for part, _ := range parents {
+		partNameIndex[part] = true
+	}
+
+	// make map of children
+	children := make(map[string][]string)
+	for part, parent := range parents {
+		if !partNameIndex[parent] {
+			continue
+		}
+
+		children[parent] = append(children[parent], part)
+	}
+
+	queue := make([]string, 0)
+	visited := make(map[string]bool)
+	topoSortedParts := make([]string, len(visited))
+	queue = append(queue, World)
+	// begin adding frames to tree
+	for len(queue) != 0 {
+		parent := queue[0]
+		queue = queue[1:]
+		if visited[parent] {
+			return nil, nil
+		}
+
+		visited[parent] = true
+		sort.Slice(children[parent], func(i, j int) bool {
+			return children[parent][i] < children[parent][j]
+		}) // sort alphabetically within the topological sort
+
+		for _, part := range children[parent] { // add all the children to the frame system, and to the stack as new parents
+			queue = append(queue, part)
+			topoSortedParts = append(topoSortedParts, part)
+		}
+	}
+
+	unlinkedParts := make([]string, 0, 4)
+	for part, _ := range parents {
+		if !visited[part] {
 			unlinkedParts = append(unlinkedParts, part)
 		}
 	}
