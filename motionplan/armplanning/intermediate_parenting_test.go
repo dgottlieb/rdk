@@ -31,8 +31,6 @@ func TestPlanningWithIntermediateFrame(t *testing.T) {
 		{FrameConfig: armLIF, ModelFrame: ur5e},
 	}
 	fs, err := referenceframe.NewFrameSystem("test", parts, []*referenceframe.LinkInFrame{toolLIF})
-	test.That(t, err, test.ShouldBeNil)
-
 	logger.Info("Frames:")
 	for fname, _ := range fs.Frames() {
 		logger.Info("  ", fname)
@@ -41,6 +39,8 @@ func TestPlanningWithIntermediateFrame(t *testing.T) {
 	for fname, parent := range fs.Parents() {
 		logger.Info("  ", fname, "->", parent)
 	}
+
+	test.That(t, err, test.ShouldBeNil)
 
 	// Start every joint at 0.5 rad.
 	startInputs := referenceframe.NewZeroInputs(fs)

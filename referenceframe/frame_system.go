@@ -69,21 +69,6 @@ func NewFrameSystem(name string, parts []*FrameSystemPart, additionalTransforms 
 
 	allPartParents := make(map[string]string)
 	for _, part := range parts {
-		if simpleModel, ok := part.ModelFrame.(*SimpleModel); ok {
-			for _, frame := range simpleModel.internalFS.frames {
-				fs.frames[frame.Name()] = frame
-				parent, err := simpleModel.internalFS.Parent(frame)
-				if err != nil {
-					return nil, fmt.Errorf("Model parent does not exist. Frame: %v Err: %w", frame, err)
-				}
-
-				fs.parents[frame.Name()] = parent.Name()
-				allPartParents[frame.Name()] = parent.Name()
-			}
-
-			continue
-		}
-
 		allPartParents[part.ModelFrame.Name()] = part.FrameConfig.Parent()
 		modelFrame, staticOffsetFrame, err := createFramesFromPart(part)
 		if err != nil {
@@ -96,6 +81,34 @@ func NewFrameSystem(name string, parts []*FrameSystemPart, additionalTransforms 
 
 		fs.frames[modelFrame.Name()] = modelFrame
 		fs.parents[modelFrame.Name()] = staticOffsetFrame.Name()
+
+		simpleModel, ok := part.ModelFrame.(*SimpleModel)
+		if !ok {
+			continue
+		}
+
+		for _, frame := range simpleModel.internalFS.frames {
+			frameName := fmt.Sprintf("%v:%v", simpleModel.Name(), frame.Name())
+			fs.frames[frameName] = frame
+			parent, err := simpleModel.internalFS.Parent(frame)
+			if err != nil {
+				return nil, fmt.Errorf("Model parent does not exist. Frame: %v Err: %w", frame, err)
+			}
+
+			parentName := fmt.Sprintf("%v:%v", simpleModel.Name(), parent.Name())
+			if parent == simpleModel {
+				panic("What did I observe to do this...")
+				fmt.Println("Parent is simple. Me:", frameName, "Parent:", simpleModel.Name())
+				parentName = simpleModel.Name()
+			} else if parent.Name() == "world" {
+				// Test case: is arm is parented by a table. Does the simpleModel.internalFS know
+				// about the table?  Make this work just with `world` to get by for now.
+				parentName = staticOffsetFrame.Name()
+			}
+
+			fs.parents[frameName] = parentName
+			allPartParents[frameName] = parentName
+		}
 	}
 	fs.cachedBFSNames = bfsFrameNames(fs)
 
@@ -121,7 +134,7 @@ func NewFrameSystem(name string, parts []*FrameSystemPart, additionalTransforms 
 	// Topologically sort parts
 	_, unlinkedParts := TopologicalSortRootedByWorld(allPartParents)
 	if len(unlinkedParts) > 0 {
-		return nil, fmt.Errorf("Cannot construct frame system. Some parts are not linked to the world frame. Parts: %v",
+		return fs, fmt.Errorf("Cannot construct frame system. Some parts are not linked to the world frame. Parts: %v",
 			unlinkedParts)
 	}
 
