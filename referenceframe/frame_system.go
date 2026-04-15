@@ -958,6 +958,8 @@ func TopologicallySortParts(parts []*FrameSystemPart) ([]*FrameSystemPart, []*Fr
 // connected to the world in topological order and a slice of frames that are not connected to the
 // world.
 func TopologicalSortRootedByWorld(parents map[string]string) ([]string, []string) {
+	fmt.Println("Sorting:", parents)
+
 	// set up directory to check existence of parents
 	partNameIndex := make(map[string]bool, len(parents))
 	partNameIndex[World] = true
@@ -1003,6 +1005,10 @@ func TopologicalSortRootedByWorld(parents map[string]string) ([]string, []string
 		if !visited[part] {
 			unlinkedParts = append(unlinkedParts, part)
 		}
+	}
+	if len(unlinkedParts) > 0 {
+		fmt.Println("Linked:", topoSortedParts, "Unlinked:", unlinkedParts)
+		panic(unlinkedParts)
 	}
 
 	return topoSortedParts, unlinkedParts
