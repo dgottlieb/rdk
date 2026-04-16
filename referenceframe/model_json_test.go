@@ -148,8 +148,8 @@ func TestParseJSONFile(t *testing.T) {
 	for i, f := range badFiles {
 		t.Run(f, func(tt *testing.T) {
 			_, err := ParseModelJSONFile(utils.ResolveFile(f), "")
-			test.That(t, err, test.ShouldNotBeNil)
-			test.That(t, err.Error(), test.ShouldContainSubstring, badFilesErrors[i].Error())
+			test.That(tt, err, test.ShouldNotBeNil)
+			test.That(tt, err.Error(), test.ShouldContainSubstring, badFilesErrors[i].Error())
 		})
 	}
 }
