@@ -35,11 +35,11 @@ func TestPlanningWithIntermediateFrame(t *testing.T) {
 	for fname, _ := range fs.Frames() {
 		logger.Info("  ", fname)
 	}
+
 	logger.Info("Parents:")
 	for fname, parent := range fs.Parents() {
 		logger.Info("  ", fname, "->", parent)
 	}
-
 	test.That(t, err, test.ShouldBeNil)
 
 	// Start every joint at 0.5 rad.

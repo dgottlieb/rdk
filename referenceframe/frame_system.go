@@ -111,6 +111,7 @@ func NewFrameSystem(name string, parts []*FrameSystemPart, additionalTransforms 
 		}
 	}
 	fs.cachedBFSNames = bfsFrameNames(fs)
+	fmt.Println("Cached:", fs.cachedBFSNames)
 
 	for _, tf := range additionalTransforms {
 		transformPart, err := LinkInFrameToFrameSystemPart(tf)
@@ -132,7 +133,7 @@ func NewFrameSystem(name string, parts []*FrameSystemPart, additionalTransforms 
 	}
 
 	// Topologically sort parts
-	_, unlinkedParts := TopologicalSortRootedByWorld(allPartParents, fs.parents)
+	_, unlinkedParts := TopologicalSortRootedByWorld(fs.parents)
 	if len(unlinkedParts) > 0 {
 		return fs, fmt.Errorf("Cannot construct frame system. Some parts are not linked to the world frame. Parts: %v",
 			unlinkedParts)
@@ -957,15 +958,7 @@ func TopologicallySortParts(parts []*FrameSystemPart) ([]*FrameSystemPart, []*Fr
 // TopologicalSortRootedByWorld partitions an input map of frames -> parents into a slice of frames
 // connected to the world in topological order and a slice of frames that are not connected to the
 // world.
-func TopologicalSortRootedByWorld(parents map[string]string, other map[string]string) ([]string, []string) {
-	b, _ := json.MarshalIndent(parents, "", "    ")
-	fmt.Println("Parents:")
-	fmt.Println(string(b))
-
-	b, _ = json.MarshalIndent(parents, "", "    ")
-	fmt.Println("Other:")
-	fmt.Println(string(b))
-
+func TopologicalSortRootedByWorld(parents map[string]string) ([]string, []string) {
 	// set up directory to check existence of parents
 	partNameIndex := make(map[string]bool, len(parents))
 	partNameIndex[World] = true

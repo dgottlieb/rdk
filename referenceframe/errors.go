@@ -1,6 +1,8 @@
 package referenceframe
 
 import (
+	"runtime/debug"
+
 	"github.com/pkg/errors"
 )
 
@@ -28,16 +30,19 @@ var ErrNoWorldConnection = errors.New("there are no robot parts that connect to 
 // NewParentFrameMissingError returns an error for when a part has named a parent whose part is missing from the collection of Parts
 // that are becoming a FrameSystem object.
 func NewParentFrameMissingError(partName, parentName string) error {
+	debug.PrintStack()
 	return errors.Errorf("part with name %s references non-existent parent %s", partName, parentName)
 }
 
 // NewParentFrameNilError returns an error indicating that the parent frame is nil.
 func NewParentFrameNilError(frameName string) error {
+	debug.PrintStack()
 	return errors.New("frame with name %q has a parent that is nil")
 }
 
 // NewFrameMissingError returns an error indicating that the given frame is missing from the framesystem.
 func NewFrameMissingError(frameName string) error {
+	debug.PrintStack()
 	return errors.Errorf("frame with name %q not in frame system", frameName)
 }
 
