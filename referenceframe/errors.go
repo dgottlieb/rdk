@@ -76,6 +76,7 @@ func NewFrameNotInListOfTransformsError(frameName string) error {
 // NewParentFrameNotInMapOfParentsError returns an error indicating that a parent from of the given name
 // is missing from the provided map of parents.
 func NewParentFrameNotInMapOfParentsError(parentFrameName string) error {
+	debug.PrintStack()
 	return errors.Errorf("parent frame named '%s' not in the map of parents", parentFrameName)
 }
 

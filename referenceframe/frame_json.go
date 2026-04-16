@@ -169,6 +169,32 @@ func (cfg *JointConfig) ToFrame() (Frame, error) {
 	}
 }
 
+func (cfg *JointConfig) ToFrameNotDumb(prefix string) (Frame, error) {
+	var limit Limit
+	switch cfg.Type {
+	case RevoluteJoint:
+		limit = Limit{Min: utils.DegToRad(cfg.Min), Max: utils.DegToRad(cfg.Max)}
+	case PrismaticJoint:
+		limit = Limit{Min: cfg.Min, Max: cfg.Max}
+	default:
+		return nil, NewUnsupportedJointTypeError(cfg.Type)
+	}
+	// Mimic joints are driven by their source joint and have no independent limits.
+	if cfg.Mimic != nil {
+		limit = Limit{Min: math.Inf(-1), Max: math.Inf(1)}
+	}
+
+	frameName := fmt.Sprintf("%v:%v", prefix, cfg.ID)
+	switch cfg.Type {
+	case RevoluteJoint:
+		return NewRotationalFrame(frameName, cfg.Axis.ParseConfig(), limit)
+	case PrismaticJoint:
+		return NewTranslationalFrame(frameName, r3.Vector(cfg.Axis), limit)
+	default:
+		return nil, NewUnsupportedJointTypeError(cfg.Type)
+	}
+}
+
 // ToDHFrames converts a DHParamConfig into a joint frame and a link frame.
 func (cfg *DHParamConfig) ToDHFrames() (Frame, Frame, error) {
 	jointID := cfg.ID + "_j"

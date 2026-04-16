@@ -88,14 +88,22 @@ func NewFrameSystem(name string, parts []*FrameSystemPart, additionalTransforms 
 		}
 
 		for _, frame := range simpleModel.internalFS.frames {
-			frameName := fmt.Sprintf("%v:%v", simpleModel.Name(), frame.Name())
+			// Dan: I started with the following:
+			//   frameName := fmt.Sprintf("%v:%v", simpleModel.Name(), frame.Name())
+			//
+			// But then learned I had to create sub-SimpleModel frames with their proper name. Much
+			// cleaner design overall having a single flat frame system.
+			frameName := frame.Name()
+
 			fs.frames[frameName] = frame
 			parent, err := simpleModel.internalFS.Parent(frame)
 			if err != nil {
 				return nil, fmt.Errorf("Model parent does not exist. Frame: %v Err: %w", frame, err)
 			}
 
-			parentName := fmt.Sprintf("%v:%v", simpleModel.Name(), parent.Name())
+			// Dan: See above:
+			//   parentName := fmt.Sprintf("%v:%v", simpleModel.Name(), parent.Name())
+			parentName := parent.Name()
 			if parent == simpleModel {
 				panic("What did I observe to do this...")
 				fmt.Println("Parent is simple. Me:", frameName, "Parent:", simpleModel.Name())
@@ -110,9 +118,6 @@ func NewFrameSystem(name string, parts []*FrameSystemPart, additionalTransforms 
 			allPartParents[frameName] = parentName
 		}
 	}
-	fs.cachedBFSNames = bfsFrameNames(fs)
-	fmt.Println("Cached:", fs.cachedBFSNames)
-
 	for _, tf := range additionalTransforms {
 		transformPart, err := LinkInFrameToFrameSystemPart(tf)
 		if err != nil {
@@ -132,6 +137,8 @@ func NewFrameSystem(name string, parts []*FrameSystemPart, additionalTransforms 
 		fs.parents[modelFrame.Name()] = staticOffsetFrame.Name()
 	}
 
+	fs.cachedBFSNames = bfsFrameNames(fs)
+
 	// Topologically sort parts
 	_, unlinkedParts := TopologicalSortRootedByWorld(fs.parents)
 	if len(unlinkedParts) > 0 {
@@ -149,6 +156,7 @@ func (sfs *FrameSystem) World() Frame {
 
 // Parent returns the parent Frame of the given Frame. It will return nil if the given frame is World.
 func (sfs *FrameSystem) Parent(frame Frame) (Frame, error) {
+	// fmt.Println("Parent called. Child:", frame.Name())
 	if !sfs.frameExists(frame.Name()) {
 		return nil, NewFrameMissingError(frame.Name())
 	}
@@ -1013,20 +1021,36 @@ func TopologicalSortRootedByWorld(parents map[string]string) ([]string, []string
 	return topoSortedParts, unlinkedParts
 }
 
+func pretty(header string, inp any) {
+	// Marshal with 4-space indentation
+	b, _ := json.MarshalIndent(inp, "", "    ")
+	fmt.Printf("%v\n", header)
+	fmt.Println(string(b))
+}
+
 // bfsFrameNames returns frame names in BFS order from world. Children at each level are
 // sorted alphabetically for determinism.
 func bfsFrameNames(fs *FrameSystem) []string {
+	// pretty("Frames", slices.Collect(maps.Keys(fs.frames)))
+	// pretty("Parents", fs.parents)
 	childrenOf := map[string][]string{}
 	for name := range fs.frames {
-		parent, err := fs.Parent(fs.Frame(name))
-		if err != nil || parent == nil {
-			continue
-		}
-		childrenOf[parent.Name()] = append(childrenOf[parent.Name()], name)
+		// Dan: This is the old code. It actually grabs a handle on the frame (initialized in
+		// parsing the arm -- the name is simply, e.g: `wrist_3_joint` and not
+		// `armComponentName:wrist_3_joint`. Hence `topLevelFS.frames` will have a key called
+		// `armComponentName:wrist_3_joint`, but
+		// `topLevelFS.frames["armComponentName:wrist_3_joint"].Name()` simply returns
+		// `wrist_3_joint`.
+		//
+		//parent, err := fs.Parent(fs.Frame(name))
+
+		parent := fs.parents[name]
+		childrenOf[parent] = append(childrenOf[parent], name)
 	}
 	for k := range childrenOf {
 		sort.Strings(childrenOf[k])
 	}
+	// pretty("Children", childrenOf)
 
 	var result []string
 	queue := []string{World}

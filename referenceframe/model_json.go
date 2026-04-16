@@ -71,23 +71,14 @@ func (cfg *ModelConfigJSON) ParseConfig(modelName string) (Model, error) {
 	switch cfg.KinParamType {
 	case "SVA", "":
 		for _, link := range cfg.Links {
-			if link.ID == World {
-				return nil, NewReservedWordError("link", World)
-			}
-		}
-		for _, joint := range cfg.Joints {
-			if joint.ID == World {
-				return nil, NewReservedWordError("joint", World)
-			}
-		}
-
-		for _, link := range cfg.Links {
 			lif, err := link.ParseConfig()
 			if err != nil {
 				return nil, err
 			}
-			parentMap[link.ID] = link.Parent
-			transforms[link.ID], err = lif.ToStaticFrame(link.ID)
+
+			linkName, parentName := fmt.Sprintf("%v:%v", modelName, link.ID), fmt.Sprintf("%v:%v", modelName, link.Parent)
+			parentMap[linkName] = parentName
+			transforms[linkName], err = lif.ToStaticFrame(linkName)
 			if err != nil {
 				return nil, err
 			}
@@ -95,8 +86,9 @@ func (cfg *ModelConfigJSON) ParseConfig(modelName string) (Model, error) {
 
 		// Now we add all of the transforms. Will eventually support: "cylindrical|fixed|helical|prismatic|revolute|spherical"
 		for _, joint := range cfg.Joints {
-			parentMap[joint.ID] = joint.Parent
-			transforms[joint.ID], err = joint.ToFrame()
+			jointName, parentName := fmt.Sprintf("%v:%v", modelName, joint.ID), fmt.Sprintf("%v:%v", modelName, joint.Parent)
+			parentMap[jointName] = parentName
+			transforms[jointName], err = joint.ToFrameNotDumb(modelName)
 			if err != nil {
 				return nil, err
 			}
@@ -127,7 +119,8 @@ func (cfg *ModelConfigJSON) ParseConfig(modelName string) (Model, error) {
 	// When no output_frames are specified, exactly one leaf (end effector)
 	// is required so we can determine the output unambiguously.
 	requireSingleLeaf := len(cfg.OutputFrames) == 0
-	fs, leaves, err := buildModelFrameSystem(transforms, parentMap, requireSingleLeaf)
+	// pretty("Arm parents:", parentMap)
+	fs, leaves, err := buildModelFrameSystem(modelName, transforms, parentMap, requireSingleLeaf)
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +248,7 @@ func ParseModelJSONFile(filename, modelName string) (Model, error) {
 // When requireSingleLeaf is true, the function errors if the model does not have exactly one leaf
 // (end effector). Pass false when output_frames is explicitly specified in the config, allowing
 // branching topologies with multiple leaves.
-func buildModelFrameSystem(transforms map[string]Frame, parents map[string]string, requireSingleLeaf bool) (*FrameSystem, []string, error) {
+func buildModelFrameSystem(modelName string, transforms map[string]Frame, parents map[string]string, requireSingleLeaf bool) (*FrameSystem, []string, error) {
 	// Build children map
 	childrenOf := map[string][]string{}
 	for child, parent := range parents {
@@ -286,6 +279,8 @@ func buildModelFrameSystem(transforms map[string]Frame, parents map[string]strin
 		}
 	}
 
+	// pretty("Transforms:", transforms)
+	// pretty("Parents:", parents)
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
@@ -311,6 +306,7 @@ func buildModelFrameSystem(transforms map[string]Frame, parents map[string]strin
 			}
 		}
 
+		// fmt.Printf("Adding: %v Parent: %v\n", frame.Name(), parentFrame.Name())
 		if err := fs.AddFrame(frame, parentFrame); err != nil {
 			return nil, nil, err
 		}
