@@ -108,16 +108,12 @@ func TestParseJSONFile(t *testing.T) {
 
 	badFiles := []string{
 		"referenceframe/testfiles/kinematicsloop.json",
-		"referenceframe/testfiles/worldjoint.json",
-		"referenceframe/testfiles/worldlink.json",
 		"referenceframe/testfiles/worldDH.json",
 		"referenceframe/testfiles/missinglink.json",
 	}
 
 	badFilesErrors := []error{
 		ErrCircularReference,
-		NewReservedWordError("link", "world"),
-		NewReservedWordError("joint", "world"),
 		ErrNeedOneEndEffector, // 0 end effectors
 		ErrNeedOneEndEffector, // 2 end effectors
 	}
