@@ -133,7 +133,9 @@ func (cfg *ModelConfigJSON) ParseConfig(modelName string) (Model, error) {
 	if len(cfg.OutputFrames) == 0 {
 		primaryOutput = leaves[0]
 	} else {
-		primaryOutput = cfg.OutputFrames[0]
+		// The primaryOutputFrame inside a json file will not know about the "component name" the
+		// frames are being created with. We append it here.
+		primaryOutput = fmt.Sprintf("%v:%v", modelName, cfg.OutputFrames[0])
 	}
 
 	// Build mimic mappings if any SVA joints have mimic configs.

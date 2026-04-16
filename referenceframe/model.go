@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"runtime/debug"
 	"strings"
 
 	"github.com/golang/geo/r3"
@@ -173,6 +174,7 @@ func NewSimpleModel(name string) *SimpleModel {
 // The primary output frame must exist in fs and determines what Transform() returns.
 func NewModel(name string, fs *FrameSystem, primaryOutputFrame string) (*SimpleModel, error) {
 	if fs.Frame(primaryOutputFrame) == nil {
+		debug.PrintStack()
 		return nil, fmt.Errorf("primary output frame %q not found in frame system", primaryOutputFrame)
 	}
 
@@ -210,6 +212,7 @@ func NewModel(name string, fs *FrameSystem, primaryOutputFrame string) (*SimpleM
 // their input is derived at runtime from the source frame's input.
 func NewModelWithMimics(name string, fs *FrameSystem, primaryOutputFrame string, mimics map[string]*mimicMapping) (*SimpleModel, error) {
 	if fs.Frame(primaryOutputFrame) == nil {
+		debug.PrintStack()
 		return nil, fmt.Errorf("primary output frame %q not found in frame system", primaryOutputFrame)
 	}
 
@@ -597,11 +600,13 @@ func (m *SimpleModel) Geometries(inputs []Input) (*GeometriesInFrame, error) {
 		if !ok {
 			continue
 		}
+
 		for _, geom := range gif.Geometries() {
-			geom.SetLabel(m.name + ":" + geom.Label())
+			geom.SetLabel(geom.Label())
 			geometries = append(geometries, geom)
 		}
 	}
+
 	return NewGeometriesInFrame(m.name, geometries), err
 }
 
