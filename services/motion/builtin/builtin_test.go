@@ -72,8 +72,10 @@ func TestMoveFailures(t *testing.T) {
 		test.That(t, err, test.ShouldBeNil)
 		poseInFrame := referenceframe.NewPoseInFrame("frame2", spatialmath.NewZeroPose())
 		_, err = ms.Move(ctx, motion.MoveReq{ComponentName: "arm1", Destination: poseInFrame, WorldState: worldState})
-		test.That(t, err, test.ShouldBeError,
-			errors.New("Cannot construct frame system. Some parts are not linked to the world frame. Parts: [frame2_origin frame2]"))
+		// frame2 and frame2_origin are not linked. They can be added in either order, so not ideal
+		// for asserting on.
+		test.That(t, err.Error(), test.ShouldContainSubstring,
+			"Cannot construct frame system. Some parts are not linked to the world frame. Parts:")
 	})
 }
 

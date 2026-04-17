@@ -361,6 +361,7 @@ func NewFromService(
 	if err != nil {
 		return nil, err
 	}
+
 	return referenceframe.NewFrameSystem(service.Name().ShortName(), fsCfg.Parts, supplementalTransforms)
 }
 
