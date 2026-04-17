@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	"github.com/pkg/errors"
 )
@@ -141,7 +142,7 @@ func (cfg *ModelConfigJSON) ParseConfig(modelName string) (Model, error) {
 	// Build mimic mappings if any SVA joints have mimic configs.
 	var builtModel *SimpleModel
 	if cfg.KinParamType == "SVA" || cfg.KinParamType == "" {
-		mimicMappings, mimicErr := buildMimicMappings(cfg.Joints, fs)
+		mimicMappings, mimicErr := buildMimicMappings(modelName, cfg.Joints, fs)
 		if mimicErr != nil {
 			return nil, mimicErr
 		}
@@ -165,7 +166,7 @@ func (cfg *ModelConfigJSON) ParseConfig(modelName string) (Model, error) {
 // detects cycles, validates that source frames exist in the FrameSystem and have DoF, and returns
 // a map of frame name -> mimicMapping. The sourceInputIdx is set to -1 as a placeholder;
 // it is resolved in NewModelWithMimics after the input schema is built.
-func buildMimicMappings(joints []JointConfig, fs *FrameSystem) (map[string]*mimicMapping, error) {
+func buildMimicMappings(modelName string, joints []JointConfig, fs *FrameSystem) (map[string]*mimicMapping, error) {
 	// Collect joints with mimic config.
 	mimicConfigs := map[string]*MimicConfig{}
 	for i := range joints {
@@ -173,7 +174,9 @@ func buildMimicMappings(joints []JointConfig, fs *FrameSystem) (map[string]*mimi
 			if joints[i].Min != 0 || joints[i].Max != 0 {
 				return nil, fmt.Errorf("%w: joint %q", ErrMimicWithLimits, joints[i].ID)
 			}
-			mimicConfigs[joints[i].ID] = joints[i].Mimic
+
+			jointName := fmt.Sprintf("%v:%v", modelName, joints[i].ID)
+			mimicConfigs[jointName] = joints[i].Mimic
 		}
 	}
 	if len(mimicConfigs) == 0 {
@@ -188,7 +191,7 @@ func buildMimicMappings(joints []JointConfig, fs *FrameSystem) (map[string]*mimi
 		composedMultiplier := mc.EffectiveMultiplier()
 		composedOffset := mc.ValueOffset
 
-		sourceJoint := mc.Joint
+		sourceJoint := fmt.Sprintf("%v:%v", modelName, mc.Joint)
 		for {
 			nextMC, ok := mimicConfigs[sourceJoint]
 			if !ok {
@@ -202,7 +205,7 @@ func buildMimicMappings(joints []JointConfig, fs *FrameSystem) (map[string]*mimi
 			// Compose: if A = m1*B + o1, and B = m2*C + o2, then A = m1*(m2*C + o2) + o1 = m1*m2*C + m1*o2 + o1
 			composedOffset = composedMultiplier*nextMC.ValueOffset + composedOffset
 			composedMultiplier *= nextMC.EffectiveMultiplier()
-			sourceJoint = nextMC.Joint
+			sourceJoint = fmt.Sprintf("%v:%v", modelName, nextMC.Joint)
 		}
 
 		resolvedMimics[jointID] = &MimicConfig{
@@ -217,6 +220,7 @@ func buildMimicMappings(joints []JointConfig, fs *FrameSystem) (map[string]*mimi
 	for jointID, mc := range resolvedMimics {
 		sourceFrame := fs.Frame(mc.Joint)
 		if sourceFrame == nil {
+			debug.PrintStack()
 			return nil, fmt.Errorf("%w: joint %q references source %q", ErrMimicSourceNotFound, jointID, mc.Joint)
 		}
 		if len(sourceFrame.DoF()) == 0 {
