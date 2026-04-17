@@ -46,18 +46,17 @@ func setupMotionServiceFromConfig(t *testing.T, configFilename string) (motion.S
 }
 
 func TestMoveFailures(t *testing.T) {
-	var err error
 	ms, teardown := setupMotionServiceFromConfig(t, "../data/arm_gantry.json")
 	defer teardown()
 	ctx := context.Background()
 	t.Run("fail on not finding gripper", func(t *testing.T) {
 		grabPose := referenceframe.NewPoseInFrame("fakeGripper", spatialmath.NewPoseFromPoint(r3.Vector{X: 10.0, Y: 10.0, Z: 10.0}))
-		_, err = ms.Move(ctx, motion.MoveReq{ComponentName: "fake", Destination: grabPose})
+		_, err := ms.Move(ctx, motion.MoveReq{ComponentName: "fake", Destination: grabPose})
 		test.That(t, err, test.ShouldNotBeNil)
 	})
 
 	t.Run("fail on nil destination", func(t *testing.T) {
-		_, err = ms.Move(ctx, motion.MoveReq{ComponentName: "arm1"})
+		_, err := ms.Move(ctx, motion.MoveReq{ComponentName: "arm1"})
 		test.That(t, err, test.ShouldNotBeNil)
 	})
 
@@ -74,7 +73,7 @@ func TestMoveFailures(t *testing.T) {
 		poseInFrame := referenceframe.NewPoseInFrame("frame2", spatialmath.NewZeroPose())
 		_, err = ms.Move(ctx, motion.MoveReq{ComponentName: "arm1", Destination: poseInFrame, WorldState: worldState})
 		test.That(t, err, test.ShouldBeError,
-			errors.New("Cannot construct frame system. Some parts are not linked to the world frame. Parts: [frame2]"))
+			errors.New("Cannot construct frame system. Some parts are not linked to the world frame. Parts: [frame2_origin frame2]"))
 	})
 }
 

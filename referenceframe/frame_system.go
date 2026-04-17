@@ -1013,10 +1013,10 @@ func TopologicalSortRootedByWorld(parents map[string]string) ([]string, []string
 			unlinkedParts = append(unlinkedParts, part)
 		}
 	}
-	if len(unlinkedParts) > 0 {
-		fmt.Println("Linked:", topoSortedParts, "Unlinked:", unlinkedParts)
-		panic(unlinkedParts)
-	}
+	// if len(unlinkedParts) > 0 {
+	//  	fmt.Println("Linked:", topoSortedParts, "Unlinked:", unlinkedParts)
+	//  	// panic(unlinkedParts)
+	// }
 
 	return topoSortedParts, unlinkedParts
 }

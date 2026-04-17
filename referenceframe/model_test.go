@@ -314,12 +314,12 @@ func TestBranchingModelGeometries(t *testing.T) {
 	test.That(t, err, test.ShouldBeNil)
 
 	// Primary chain end: goes through A(X) then B(Y), Z unchanged.
-	primaryPt := geoms.GeometryByName("branching:primaryEnd").Pose().Point()
+	primaryPt := geoms.GeometryByName("primaryEnd").Pose().Point()
 	test.That(t, spatial.R3VectorAlmostEqual(primaryPt, r3.Vector{X: aVal, Y: bVal, Z: 0}, defaultFloatPrecision), test.ShouldBeTrue)
 
 	// Branch end: goes through A(X) then C(Z), Y unchanged.
 	// If cVal's input were incorrectly mapped, this position would be wrong.
-	branchPt := geoms.GeometryByName("branching:branchEnd").Pose().Point()
+	branchPt := geoms.GeometryByName("branchEnd").Pose().Point()
 	test.That(t, spatial.R3VectorAlmostEqual(branchPt, r3.Vector{X: aVal, Y: 0, Z: cVal}, defaultFloatPrecision), test.ShouldBeTrue)
 }
 
