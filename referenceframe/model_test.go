@@ -73,18 +73,20 @@ func TestModelGeometries(t *testing.T) {
 	inputs := make([]Input, len(m.DoF()))
 	geometries, err := m.Geometries(inputs)
 	test.That(t, err, test.ShouldBeNil)
-	link1 := geometries.GeometryByName("test:link1").Pose().Point()
+	// When using `NewSerialModel`, the frames already have immutable names. When converting to
+	// geometries, they will not be prefixed with the `test` model name.
+	link1 := geometries.GeometryByName("link1").Pose().Point()
 	test.That(t, spatial.R3VectorAlmostEqual(link1, r3.Vector{0, 0, 10}, defaultFloatPrecision), test.ShouldBeTrue)
-	link2 := geometries.GeometryByName("test:link2").Pose().Point()
+	link2 := geometries.GeometryByName("link2").Pose().Point()
 	test.That(t, spatial.R3VectorAlmostEqual(link2, r3.Vector{0, 0, 20}, defaultFloatPrecision), test.ShouldBeTrue)
 
 	// transform the model 90 degrees at the joint
 	inputs[0] = math.Pi / 2
 	geometries, _ = m.Geometries(inputs)
 	test.That(t, geometries, test.ShouldNotBeNil)
-	link1 = geometries.GeometryByName("test:link1").Pose().Point()
+	link1 = geometries.GeometryByName("link1").Pose().Point()
 	test.That(t, spatial.R3VectorAlmostEqual(link1, r3.Vector{0, 0, 10}, defaultFloatPrecision), test.ShouldBeTrue)
-	link2 = geometries.GeometryByName("test:link2").Pose().Point()
+	link2 = geometries.GeometryByName("link2").Pose().Point()
 	test.That(t, spatial.R3VectorAlmostEqual(link2, r3.Vector{10, 0, 10}, defaultFloatPrecision), test.ShouldBeTrue)
 }
 
