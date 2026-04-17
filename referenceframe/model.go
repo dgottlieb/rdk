@@ -654,7 +654,7 @@ func (m *SimpleModel) UnmarshalJSON(data []byte) error {
 
 	if ser.Model != nil {
 		// If Model is not nil, we build by parsing the config
-		parsed, err := ser.Model.ParseConfig(ser.Model.Name)
+		parsed, err := ser.Model.ParseConfig(ser.Name)
 		if err != nil {
 			return err
 		}
