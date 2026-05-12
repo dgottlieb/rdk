@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/golang/geo/r3"
+	"github.com/viam-labs/motion-tools/client/client"
 	commonpb "go.viam.com/api/common/v1"
 	"go.viam.com/test"
 
@@ -75,5 +77,51 @@ func TestIKTolerances(t *testing.T) {
 	mp2, err := newCBiRRTMotionPlanner(ctx, pc2, psc2, logger.Sublogger("cbirrt"))
 	test.That(t, err, test.ShouldBeNil)
 	_, err = mp2.planForTest(ctx)
+	test.That(t, err, test.ShouldBeNil)
+}
+
+func TestArmWithGripperViz(t *testing.T) {
+	fs := referenceframe.NewEmptyFrameSystem("arm_with_gripper")
+
+	lite6, err := referenceframe.ParseModelJSONFile(
+		utils.ResolveFile("components/arm/sim/kinematics/lite6.json"), "lite6")
+	test.That(t, err, test.ShouldBeNil)
+	err = fs.AddFrame(lite6, fs.World())
+	test.That(t, err, test.ShouldBeNil)
+
+	gripperOffset, err := referenceframe.NewStaticFrame(
+		"gripper_offset", spatial.NewPoseFromPoint(r3.Vector{Z: 40}))
+	test.That(t, err, test.ShouldBeNil)
+	err = fs.AddFrame(gripperOffset, lite6)
+	test.That(t, err, test.ShouldBeNil)
+
+	gripper, err := referenceframe.ParseModelJSONFile(
+		utils.ResolveFile("referenceframe/testfiles/test_gripper.json"), "gripper")
+	test.That(t, err, test.ShouldBeNil)
+	err = fs.AddFrame(gripper, gripperOffset)
+	test.That(t, err, test.ShouldBeNil)
+
+	inputs := referenceframe.FrameSystemInputs{
+		"lite6":   []referenceframe.Input{0, 0.5, 1, 0, 0, 0},
+		"gripper": []referenceframe.Input{50, 50},
+	}
+
+	heldBox, err := spatial.NewEmptyBox(
+		spatial.NewPose(r3.Vector{Z: 1}, &spatial.OrientationVector{OX: -1}),
+		r3.Vector{X: 40, Y: 40, Z: 40},
+		5, "held_box")
+	test.That(t, err, test.ShouldBeNil)
+	heldBoxFrame, err := referenceframe.NewStaticFrameWithGeometry(
+		"held_box",
+		spatial.NewPose(r3.Vector{Z: 1}, &spatial.OrientationVector{OX: -1}),
+		heldBox,
+	)
+	test.That(t, err, test.ShouldBeNil)
+	err = fs.AddFrame(heldBoxFrame, gripper)
+	test.That(t, err, test.ShouldBeNil)
+
+	err = client.RemoveAllSpatialObjects()
+	test.That(t, err, test.ShouldBeNil)
+	err = client.DrawFrameSystem(fs, inputs)
 	test.That(t, err, test.ShouldBeNil)
 }

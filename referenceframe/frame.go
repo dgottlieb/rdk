@@ -462,10 +462,21 @@ func (sf *staticFrame) Geometries(input []Input) (*GeometriesInFrame, error) {
 	if len(input) != 0 {
 		return nil, NewIncorrectDoFError(len(input), 0)
 	}
+
 	newGeom := sf.geometry.Transform(spatial.NewZeroPose())
+	if emptyBox, ok := newGeom.(*spatial.EmptyBox); ok {
+		ret := []spatial.Geometry{}
+		for _, wall := range emptyBox.Walls() {
+			ret = append(ret, wall)
+		}
+
+		return NewGeometriesInFrame(sf.name, ret), nil
+	}
+
 	if newGeom.Label() == "" {
 		newGeom.SetLabel(sf.name)
 	}
+
 	return NewGeometriesInFrame(sf.name, []spatial.Geometry{newGeom}), nil
 }
 
