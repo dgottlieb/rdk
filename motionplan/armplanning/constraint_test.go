@@ -12,7 +12,7 @@ import (
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/motionplan"
 	"go.viam.com/rdk/referenceframe"
-	spatial "go.viam.com/rdk/spatialmath"
+	"go.viam.com/rdk/spatialmath"
 	"go.viam.com/rdk/utils"
 )
 
@@ -27,7 +27,7 @@ func TestIKTolerances(t *testing.T) {
 
 	goal := referenceframe.FrameSystemPoses{m.Name(): referenceframe.NewPoseInFrame(
 		referenceframe.World,
-		spatial.NewPoseFromProtobuf(&commonpb.Pose{X: -46, Y: 0, Z: 372, OX: -1.78, OY: -3.3, OZ: -1.11}),
+		spatialmath.NewPoseFromProtobuf(&commonpb.Pose{X: -46, Y: 0, Z: 372, OX: -1.78, OY: -3.3, OZ: -1.11}),
 	)}
 
 	seed := referenceframe.NewLinearInputs()
@@ -86,42 +86,113 @@ func TestArmWithGripperViz(t *testing.T) {
 	lite6, err := referenceframe.ParseModelJSONFile(
 		utils.ResolveFile("components/arm/sim/kinematics/lite6.json"), "lite6")
 	test.That(t, err, test.ShouldBeNil)
+
 	err = fs.AddFrame(lite6, fs.World())
 	test.That(t, err, test.ShouldBeNil)
 
 	gripperOffset, err := referenceframe.NewStaticFrame(
-		"gripper_offset", spatial.NewPoseFromPoint(r3.Vector{Z: 40}))
+		"gripper_offset", spatialmath.NewPoseFromPoint(r3.Vector{Z: 40}))
 	test.That(t, err, test.ShouldBeNil)
+
 	err = fs.AddFrame(gripperOffset, lite6)
 	test.That(t, err, test.ShouldBeNil)
 
 	gripper, err := referenceframe.ParseModelJSONFile(
 		utils.ResolveFile("referenceframe/testfiles/test_gripper.json"), "gripper")
 	test.That(t, err, test.ShouldBeNil)
+
 	err = fs.AddFrame(gripper, gripperOffset)
 	test.That(t, err, test.ShouldBeNil)
 
 	inputs := referenceframe.FrameSystemInputs{
-		"lite6":   []referenceframe.Input{0, 0.5, 1, 0, 0, 0},
+		"lite6":   []referenceframe.Input{0, 0, 0, 0, -1.6, 0},
 		"gripper": []referenceframe.Input{50, 50},
 	}
 
-	heldBox, err := spatial.NewEmptyBox(
-		spatial.NewPose(r3.Vector{Z: 1}, &spatial.OrientationVector{OX: -1}),
-		r3.Vector{X: 40, Y: 40, Z: 40},
+	heldBox, err := spatialmath.NewEmptyBox(
+		spatialmath.NewPose(r3.Vector{Z: 1}, &spatialmath.OrientationVector{OX: -1}),
+		r3.Vector{X: 40, Y: 40, Z: 80},
 		5, "held_box")
 	test.That(t, err, test.ShouldBeNil)
+
 	heldBoxFrame, err := referenceframe.NewStaticFrameWithGeometry(
 		"held_box",
-		spatial.NewPose(r3.Vector{Z: 1}, &spatial.OrientationVector{OX: -1}),
+		spatialmath.NewPose(r3.Vector{Z: 1}, &spatialmath.OrientationVector{OX: -1}),
 		heldBox,
 	)
 	test.That(t, err, test.ShouldBeNil)
+
 	err = fs.AddFrame(heldBoxFrame, gripper)
 	test.That(t, err, test.ShouldBeNil)
 
+	const floorSize = 1500.0
+	const floorThickness = 20.0
+	floor, err := spatialmath.NewBox(
+		spatialmath.NewZeroPose(),
+		r3.Vector{X: floorSize, Y: floorSize, Z: floorThickness},
+		"floor",
+	)
+	test.That(t, err, test.ShouldBeNil)
+
+	floorFrame, err := referenceframe.NewStaticFrameWithGeometry(
+		"floor",
+		spatialmath.NewPoseFromPoint(r3.Vector{Z: -floorThickness / 2}),
+		floor,
+	)
+	test.That(t, err, test.ShouldBeNil)
+
+	err = fs.AddFrame(floorFrame, fs.World())
+	test.That(t, err, test.ShouldBeNil)
+
+	createFrother(t, fs, floorFrame)
+
 	err = client.RemoveAllSpatialObjects()
 	test.That(t, err, test.ShouldBeNil)
+
 	err = client.DrawFrameSystem(fs, inputs)
+	test.That(t, err, test.ShouldBeNil)
+}
+
+func createFrother(t *testing.T, fs *referenceframe.FrameSystem, floorFrame referenceframe.Frame) {
+	basePos := spatialmath.NewPoseFromPoint(r3.Vector{X: 400, Z: 30})
+	base, err := spatialmath.NewBox(basePos, r3.Vector{X: 150, Y: 150, Z: 30}, "base")
+	test.That(t, err, test.ShouldBeNil)
+
+	baseFrame, err := referenceframe.NewStaticFrameWithGeometry("base", basePos, base)
+	test.That(t, err, test.ShouldBeNil)
+
+	err = fs.AddFrame(baseFrame, floorFrame)
+	test.That(t, err, test.ShouldBeNil)
+
+	backPos := spatialmath.NewPoseFromPoint(r3.Vector{X: 50, Z: 75})
+	back, err := spatialmath.NewBox(backPos, r3.Vector{X: 50, Y: 150, Z: 150}, "back")
+
+	backFrame, err := referenceframe.NewStaticFrameWithGeometry("back", backPos, back)
+	test.That(t, err, test.ShouldBeNil)
+
+	err = fs.AddFrame(backFrame, baseFrame)
+	test.That(t, err, test.ShouldBeNil)
+
+	topPos := spatialmath.NewPoseFromPoint(r3.Vector{X: -25, Z: 75})
+	top, err := spatialmath.NewBox(topPos, r3.Vector{X: 100, Y: 150, Z: 30}, "top")
+
+	topFrame, err := referenceframe.NewStaticFrameWithGeometry("top", topPos, top)
+	test.That(t, err, test.ShouldBeNil)
+
+	err = fs.AddFrame(topFrame, backFrame)
+	test.That(t, err, test.ShouldBeNil)
+
+	stickPos := spatialmath.NewPose(
+		r3.Vector{X: -25, Y: -75, Z: -60},
+		&spatialmath.OrientationVector{OZ: -2, OY: -1})
+	stickRadius, stickLen := 5., 100.
+	stick, err := spatialmath.NewCapsule(stickPos, stickRadius, stickLen, "frother")
+	test.That(t, err, test.ShouldBeNil)
+
+	stickFrame, err := referenceframe.NewStaticFrameWithGeometry(
+		"frother", stickPos, stick)
+	test.That(t, err, test.ShouldBeNil)
+
+	err = fs.AddFrame(stickFrame, topFrame)
 	test.That(t, err, test.ShouldBeNil)
 }
