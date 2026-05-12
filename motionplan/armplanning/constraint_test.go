@@ -81,6 +81,7 @@ func TestIKTolerances(t *testing.T) {
 }
 
 func TestArmWithGripperViz(t *testing.T) {
+	logger := logging.NewTestLogger(t)
 	fs := referenceframe.NewEmptyFrameSystem("arm_with_gripper")
 
 	lite6, err := referenceframe.ParseModelJSONFile(
@@ -111,7 +112,7 @@ func TestArmWithGripperViz(t *testing.T) {
 
 	heldBox, err := spatialmath.NewEmptyBox(
 		spatialmath.NewPose(r3.Vector{Z: 1}, &spatialmath.OrientationVector{OX: -1}),
-		r3.Vector{X: 40, Y: 40, Z: 80},
+		r3.Vector{X: 40, Y: 40, Z: 40},
 		5, "held_box")
 	test.That(t, err, test.ShouldBeNil)
 
@@ -144,6 +145,7 @@ func TestArmWithGripperViz(t *testing.T) {
 	err = fs.AddFrame(floorFrame, fs.World())
 	test.That(t, err, test.ShouldBeNil)
 
+	// Creates a frother that has a base, back, top and a stick hanging from the top out the side.
 	createFrother(t, fs, floorFrame)
 
 	err = client.RemoveAllSpatialObjects()
@@ -151,6 +153,60 @@ func TestArmWithGripperViz(t *testing.T) {
 
 	err = client.DrawFrameSystem(fs, inputs)
 	test.That(t, err, test.ShouldBeNil)
+
+	idealInputs := referenceframe.FrameSystemInputs{
+		"lite6":   []referenceframe.Input{5.761739365860415, 1.4095370300288768, 1.608159059662642, -1.0968735049309546, -1.4002610417860264, -3.3},
+		"gripper": []referenceframe.Input{30, 25},
+	}
+	_ = idealInputs
+	idealBoxPose := spatialmath.NewPose(
+		r3.Vector{X: 395.0, Y: -97.36, Z: 65.2786},
+		&spatialmath.OrientationVectorDegrees{
+			Theta: -4.10, OX: -0.192, OY: 0.258, OZ: 0.94})
+
+	ctx := context.Background()
+	req := &PlanRequest{
+		FrameSystem: fs,
+		Goals: []*PlanState{
+			NewPlanState(referenceframe.FrameSystemPoses{
+				"held_box": referenceframe.NewPoseInFrameWithGoalCloud(
+					referenceframe.World,
+					idealBoxPose,
+					&referenceframe.PoseCloud{
+						X: 10, Y: 10, Z: 10, OX: 0.2, OY: 0.2, OZ: 0.2, Theta: 15,
+					},
+				),
+			}, nil),
+		},
+		StartState: NewPlanState(nil, inputs),
+		PlannerOptions: &PlannerOptions{
+			Timeout: defaultTimeout + 1,
+		},
+	}
+	err = req.WriteToFile("/home/dgottlieb/viam/rdk/box-to-frother-failed-plan.json")
+	test.That(t, err, test.ShouldBeNil)
+
+	plan, _, err := PlanMotion(ctx, logger.Sublogger("heldbox-to-ideal"), req)
+	test.That(t, err, test.ShouldBeNil)
+
+	trajectory := plan.Trajectory()
+	finalInputs := trajectory[len(trajectory)-1]
+	err = client.DrawFrameSystem(fs, finalInputs)
+	test.That(t, err, test.ShouldBeNil)
+
+	heldBoxInWorld, err := fs.Transform(
+		finalInputs.ToLinearInputs(),
+		referenceframe.NewPoseInFrame("held_box", spatialmath.NewZeroPose()),
+		referenceframe.World,
+	)
+	test.That(t, err, test.ShouldBeNil)
+
+	heldBoxPose := heldBoxInWorld.(*referenceframe.PoseInFrame).Pose()
+	logger.Infof(
+		"held_box world pose: position=%v orientation=%v",
+		heldBoxPose.Point(),
+		heldBoxPose.Orientation().OrientationVectorDegrees(),
+	)
 }
 
 func createFrother(t *testing.T, fs *referenceframe.FrameSystem, floorFrame referenceframe.Frame) {
@@ -183,7 +239,7 @@ func createFrother(t *testing.T, fs *referenceframe.FrameSystem, floorFrame refe
 	test.That(t, err, test.ShouldBeNil)
 
 	stickPos := spatialmath.NewPose(
-		r3.Vector{X: -25, Y: -75, Z: -60},
+		r3.Vector{X: -30, Y: -75, Z: -60},
 		&spatialmath.OrientationVector{OZ: -2, OY: -1})
 	stickRadius, stickLen := 5., 100.
 	stick, err := spatialmath.NewCapsule(stickPos, stickRadius, stickLen, "frother")
@@ -195,4 +251,19 @@ func createFrother(t *testing.T, fs *referenceframe.FrameSystem, floorFrame refe
 
 	err = fs.AddFrame(stickFrame, topFrame)
 	test.That(t, err, test.ShouldBeNil)
+
+	// testBoxPos := spatialmath.NewPose(
+	//  	r3.Vector{Z: stickLen / 2},
+	//  	&spatialmath.OrientationVectorDegrees{OX: -0.4, OY: -.4, OZ: -2, Theta: 75},
+	// )
+	// testBox, err := spatialmath.NewEmptyBox(
+	//  	testBoxPos,
+	//  	r3.Vector{X: 40, Y: 40, Z: 40},
+	//  	5, "testBox")
+	// test.That(t, err, test.ShouldBeNil)
+	//
+	// testBoxFrame, err := referenceframe.NewStaticFrameWithGeometry(
+	//  	"testBox", testBoxPos, testBox)
+	// test.That(t, err, test.ShouldBeNil)
+	// err = fs.AddFrame(testBoxFrame, stickFrame)
 }
