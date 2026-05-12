@@ -151,9 +151,6 @@ func TestArmWithGripperViz(t *testing.T) {
 	err = client.RemoveAllSpatialObjects()
 	test.That(t, err, test.ShouldBeNil)
 
-	err = client.DrawFrameSystem(fs, inputs)
-	test.That(t, err, test.ShouldBeNil)
-
 	idealInputs := referenceframe.FrameSystemInputs{
 		"lite6":   []referenceframe.Input{5.761739365860415, 1.4095370300288768, 1.608159059662642, -1.0968735049309546, -1.4002610417860264, -3.3},
 		"gripper": []referenceframe.Input{30, 25},
@@ -163,6 +160,19 @@ func TestArmWithGripperViz(t *testing.T) {
 		r3.Vector{X: 395.0, Y: -97.36, Z: 65.2786},
 		&spatialmath.OrientationVectorDegrees{
 			Theta: -4.10, OX: -0.192, OY: 0.258, OZ: 0.94})
+	//
+	// testBox, err := spatialmath.NewEmptyBox(
+	//  	idealBoxPose, r3.Vector{X: 40, Y: 40, Z: 40}, 5, "testBox")
+	// test.That(t, err, test.ShouldBeNil)
+	//
+	// testBoxFrame, err := referenceframe.NewStaticFrameWithGeometry("testBox", idealBoxPose, testBox)
+	// test.That(t, err, test.ShouldBeNil)
+	//
+	// err = fs.AddFrame(testBoxFrame, fs.World())
+	// test.That(t, err, test.ShouldBeNil)
+	//
+	err = client.DrawFrameSystem(fs, inputs)
+	test.That(t, err, test.ShouldBeNil)
 
 	ctx := context.Background()
 	req := &PlanRequest{

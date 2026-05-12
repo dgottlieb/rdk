@@ -464,14 +464,14 @@ func (sf *staticFrame) Geometries(input []Input) (*GeometriesInFrame, error) {
 	}
 
 	newGeom := sf.geometry.Transform(spatial.NewZeroPose())
-	if emptyBox, ok := newGeom.(*spatial.EmptyBox); ok {
-		ret := []spatial.Geometry{}
-		for _, wall := range emptyBox.Walls() {
-			ret = append(ret, wall)
-		}
-
-		return NewGeometriesInFrame(sf.name, ret), nil
-	}
+	// if emptyBox, ok := newGeom.(*spatial.EmptyBox); ok {
+	//  	ret := []spatial.Geometry{}
+	//  	for _, wall := range emptyBox.Walls() {
+	//  		ret = append(ret, wall)
+	//  	}
+	//
+	//  	return NewGeometriesInFrame(sf.name, ret), nil
+	// }
 
 	if newGeom.Label() == "" {
 		newGeom.SetLabel(sf.name)
