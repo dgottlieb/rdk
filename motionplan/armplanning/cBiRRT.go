@@ -124,10 +124,10 @@ func (mp *cBiRRTMotionPlanner) rrtRunner(
 	target := newConfigurationNode(interpConfig)
 
 	map1, map2 := rrtMaps.startMap, rrtMaps.goalMap
-	for i := 0; i < maxPlanIter; i++ {
-		mp.logger.CDebugf(ctx, "iteration: %d target: %v", i, logging.FloatArrayFormat{"", target.inputs.GetLinearizedInputs()})
+	for iterNum := 0; iterNum < maxPlanIter; iterNum++ {
+		mp.logger.CDebugf(ctx, "iteration: %d target: %v", iterNum, logging.FloatArrayFormat{"", target.inputs.GetLinearizedInputs()})
 		if ctx.Err() != nil {
-			mp.logger.CDebugf(ctx, "CBiRRT timed out after %d iterations", i)
+			mp.logger.CDebugf(ctx, "CBiRRT timed out after %d iterations", iterNum)
 			return &rrtSolution{maps: rrtMaps}, fmt.Errorf("cbirrt timeout %w", ctx.Err())
 		}
 
@@ -137,8 +137,8 @@ func (mp *cBiRRTMotionPlanner) rrtRunner(
 			nearest1 := nearestNeighbor(target, map1, nodeConfigurationDistanceFunc)
 			nearest2 := nearestNeighbor(target, map2, nodeConfigurationDistanceFunc)
 
-			map1reached := mp.constrainedExtend(ctx, i, map1, nearest1, target)
-			map2reached := mp.constrainedExtend(ctx, i, map2, nearest2, target)
+			map1reached := mp.constrainedExtend(ctx, iterNum, map1, nearest1, target)
+			map2reached := mp.constrainedExtend(ctx, iterNum, map2, nearest2, target)
 
 			map1reached.corner = true
 			map2reached.corner = true
@@ -172,14 +172,14 @@ func (mp *cBiRRTMotionPlanner) rrtRunner(
 
 		// Solved!
 		if reachedDelta <= mp.pc.planOpts.InputIdentDist {
-			mp.logger.CDebugf(ctx, "CBiRRT found solution after %d iterations in %v", i, time.Since(startTime))
 			cancel()
 			path := extractPath(rrtMaps.startMap, rrtMaps.goalMap, &nodePair{map1reached, map2reached}, true)
+			mp.logger.CDebugf(ctx, "CBiRRT found solution. Path length: %v Iterations: %d Time: %v", len(path), iterNum, time.Since(startTime))
 			return &rrtSolution{steps: path, maps: rrtMaps}, nil
 		}
 
 		// sample near map 1 and switch which map is which to keep adding to them even
-		target, err = mp.sample(map1reached, i)
+		target, err = mp.sample(map1reached, iterNum)
 		if err != nil {
 			return &rrtSolution{maps: rrtMaps}, err
 		}
