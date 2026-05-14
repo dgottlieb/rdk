@@ -105,12 +105,18 @@ func realMain() error {
 		// For regular cmd-plan runs, leave `mp` at DEBUG, and promote underneath loggers to emit
 		// INFO+ logs.
 		reg.Update([]logging.LoggerPatternConfig{
-			{
-				Pattern: "*.mp.*",
-				Level:   "INFO",
+			// `mp` at DEBUG is reasonable, everything under `mp` is chatty and set to only emit
+			// INFO+ for testing.
+			logging.LoggerPatternConfig{
+				Pattern: "*.mp",
+				Level:   "DEBUG",
 			},
-			{
-				Pattern: "*.networking.*",
+			logging.LoggerPatternConfig{
+				Pattern: "*.mp.*",
+				Level:   "DEBUG",
+			},
+			logging.LoggerPatternConfig{
+				Pattern: "*.ik",
 				Level:   "INFO",
 			},
 		}, logger)

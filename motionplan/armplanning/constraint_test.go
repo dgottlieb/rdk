@@ -2,6 +2,7 @@ package armplanning
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/golang/geo/r3"
@@ -152,29 +153,34 @@ func TestArmWithGripperViz(t *testing.T) {
 	test.That(t, err, test.ShouldBeNil)
 
 	idealInputs := referenceframe.FrameSystemInputs{
-		"lite6":   []referenceframe.Input{5.761739365860415, 1.4095370300288768, 1.608159059662642, -1.0968735049309546, -1.4002610417860264, -3.3},
+		"lite6":   []referenceframe.Input{5.761739365860415, 1.4095370300288768, 1.608159059662642, -1.0968735049309546, -1.4002610417860264, -3.3 + math.Pi},
 		"gripper": []referenceframe.Input{30, 25},
 	}
-	_ = idealInputs
 	idealBoxPose := spatialmath.NewPose(
-		r3.Vector{X: 395.0, Y: -97.36, Z: 65.2786},
+		r3.Vector{X: 395.0, Y: -95.0, Z: 60.0},
 		&spatialmath.OrientationVectorDegrees{
-			Theta: -4.10, OX: -0.192, OY: 0.258, OZ: 0.94})
-	//
-	// testBox, err := spatialmath.NewEmptyBox(
-	//  	idealBoxPose, r3.Vector{X: 40, Y: 40, Z: 40}, 5, "testBox")
-	// test.That(t, err, test.ShouldBeNil)
-	//
-	// testBoxFrame, err := referenceframe.NewStaticFrameWithGeometry("testBox", idealBoxPose, testBox)
-	// test.That(t, err, test.ShouldBeNil)
-	//
-	// err = fs.AddFrame(testBoxFrame, fs.World())
-	// test.That(t, err, test.ShouldBeNil)
-	//
-	err = client.DrawFrameSystem(fs, inputs)
+			Theta: 100.0, OX: -0.10, OY: 0.30, OZ: 0.94})
+	goalCloud := &referenceframe.PoseCloud{
+		X: 10, Y: 10, Z: 10, OX: 0.2, OY: 0.2, OZ: 0.2, Theta: 360,
+	}
+
+	err = client.DrawFrameSystem(fs, idealInputs)
 	test.That(t, err, test.ShouldBeNil)
 
+	idealHeldBoxInWorldI, err := fs.Transform(
+		idealInputs.ToLinearInputs(),
+		referenceframe.NewPoseInFrame("held_box", spatialmath.NewZeroPose()),
+		referenceframe.World,
+	)
+	idealHeldBoxInWorld := idealHeldBoxInWorldI.(*referenceframe.PoseInFrame)
+
+	logger.Infof("IdealBoxPose: %v PoseAtIdealInputs: %v Between: %v", idealBoxPose, idealHeldBoxInWorld, spatialmath.PoseBetween(idealBoxPose, idealHeldBoxInWorld.Pose()))
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, goalCloud.PoseInCloud(idealBoxPose, idealHeldBoxInWorld.Pose()), test.ShouldBeTrue)
+
 	ctx := context.Background()
+	plannerOptions := NewBasicPlannerOptions()
+	plannerOptions.Timeout = defaultTimeout
 	req := &PlanRequest{
 		FrameSystem: fs,
 		Goals: []*PlanState{
@@ -182,17 +188,27 @@ func TestArmWithGripperViz(t *testing.T) {
 				"held_box": referenceframe.NewPoseInFrameWithGoalCloud(
 					referenceframe.World,
 					idealBoxPose,
-					&referenceframe.PoseCloud{
-						X: 10, Y: 10, Z: 10, OX: 0.2, OY: 0.2, OZ: 0.2, Theta: 15,
-					},
+					goalCloud,
 				),
 			}, nil),
 		},
-		StartState: NewPlanState(nil, inputs),
-		PlannerOptions: &PlannerOptions{
-			Timeout: defaultTimeout + 1,
-		},
+		StartState:     NewPlanState(nil, inputs),
+		PlannerOptions: plannerOptions,
+		Constraints:    &motionplan.Constraints{},
 	}
+
+	// planCtx, err := newPlanContext(ctx, logger, req, &PlanMeta{})
+	// test.That(t, err, test.ShouldBeNil)
+	//
+	// planSegCtx, err := newPlanSegmentContext(ctx, planCtx, idealInputs.ToLinearInputs(), req.Goals[0].Poses())
+	// test.That(t, err, test.ShouldBeNil)
+	//
+	// _, err = planSegCtx.checker.CheckStateFSConstraints(ctx, &motionplan.StateFS{
+	//  	Configuration: idealInputs.ToLinearInputs(),
+	//  	FS:            fs,
+	// })
+	// test.That(t, err, test.ShouldBeNil)
+
 	err = req.WriteToFile("/home/dgottlieb/viam/rdk/box-to-frother-failed-plan.json")
 	test.That(t, err, test.ShouldBeNil)
 

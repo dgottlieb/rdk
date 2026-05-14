@@ -59,6 +59,10 @@ func applyMotionRegistryOptions(registry *Registry) {
 			},
 			LoggerPatternConfig{
 				Pattern: "*.mp.*",
+				Level:   "DEBUG",
+			},
+			LoggerPatternConfig{
+				Pattern: "*.ik",
 				Level:   "INFO",
 			},
 		)
