@@ -140,9 +140,6 @@ func (mp *cBiRRTMotionPlanner) rrtRunner(
 			map1reached := mp.constrainedExtend(ctx, iterNum, map1, nearest1, target)
 			map2reached := mp.constrainedExtend(ctx, iterNum, map2, nearest2, target)
 
-			map1reached.corner = true
-			map2reached.corner = true
-
 			return map1reached, map2reached
 		}
 

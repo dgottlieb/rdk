@@ -53,8 +53,6 @@ func fixedStepInterpolation(start, target *node, qstep map[string][]float64) *re
 
 type node struct {
 	inputs *referenceframe.LinearInputs
-	// Dan: What is a corner?
-	corner bool
 	// cost of moving from seed to this inputs
 	cost float64
 	// checkPath is true when the path has been checked and was determined to meet constraints
@@ -64,7 +62,6 @@ type node struct {
 func newConfigurationNode(q *referenceframe.LinearInputs) *node {
 	return &node{
 		inputs: q,
-		corner: false,
 	}
 }
 
