@@ -76,9 +76,10 @@ func (pc *planContext) linearizeFSmetric(metric motionplan.StateFSMetric) ik.Cos
 type planSegmentContext struct {
 	pc *planContext
 
-	start    *referenceframe.LinearInputs
-	origGoal referenceframe.FrameSystemPoses // goals are defined in frames willy nilly
-	goal     referenceframe.FrameSystemPoses // all in world
+	start      *referenceframe.LinearInputs
+	origGoal   referenceframe.FrameSystemPoses // goals are defined in frames willy nilly
+	goal       referenceframe.FrameSystemPoses // all in world
+	goalMetric motionplan.StateFSMetric
 
 	startPoses referenceframe.FrameSystemPoses
 
@@ -92,9 +93,10 @@ func newPlanSegmentContext(ctx context.Context, pc *planContext, start *referenc
 	_, span := trace.StartSpan(ctx, "newPlanSegmentContext")
 	defer span.End()
 	psc := &planSegmentContext{
-		pc:       pc,
-		start:    start,
-		origGoal: goal,
+		pc:         pc,
+		start:      start,
+		origGoal:   goal,
+		goalMetric: pc.request.PlannerOptions.getGoalMetric(goal),
 	}
 
 	var err error
@@ -160,6 +162,51 @@ func (psc *planSegmentContext) checkPath(ctx context.Context, start, end *refere
 		checkFinal,
 	)
 	return err
+}
+
+func (psc *planSegmentContext) checkPathFeedback(ctx context.Context, start, end *referenceframe.LinearInputs, checkFinal bool) (pathFeedback, error) {
+	ctx, span := trace.StartSpan(ctx, "checkPath")
+	defer span.End()
+	validSegment, err := psc.checker.CheckStateConstraintsAcrossSegmentFS(
+		ctx,
+		&motionplan.SegmentFS{
+			StartConfiguration: start,
+			EndConfiguration:   end,
+			FS:                 psc.pc.fs,
+		},
+		psc.pc.planOpts.Resolution,
+		checkFinal,
+	)
+	if err == nil {
+		return pathFeedback{}, nil
+	}
+
+	ret := pathFeedback{
+		IsObstacleCollision: strings.Contains(err.Error(), motionplan.ObstacleConstraintDescription) ||
+			strings.Contains(err.Error(), motionplan.RobotCollisionConstraintDescription),
+		LastGoodInputs:      validSegment.EndConfiguration,
+		DistanceTraveledMap: make(map[string]float64),
+		RemainingCost: psc.goalMetric(&motionplan.StateFS{
+			Configuration: validSegment.EndConfiguration,
+			FS:            psc.pc.fs,
+		}),
+	}
+
+	for frameName, goalPose := range psc.goal {
+		currPoseDesc := referenceframe.NewZeroPoseInFrame(frameName)
+		currPoseI, err := psc.pc.fs.Transform(
+			validSegment.EndConfiguration, currPoseDesc, goalPose.Parent())
+		if err != nil {
+			panic(err)
+		}
+		currPose := currPoseI.(*referenceframe.PoseInFrame)
+
+		distance := currPose.Pose().Point().Distance(psc.startPoses[frameName].Pose().Point())
+		ret.DistanceTraveledMap[frameName] = distance
+		ret.DistanceTraveled += distance
+	}
+
+	return ret, err
 }
 
 func translateGoalsToWorldPosition(

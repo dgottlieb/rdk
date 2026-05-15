@@ -51,12 +51,30 @@ func fixedStepInterpolation(start, target *node, qstep map[string][]float64) *re
 	return newNear
 }
 
+type pathFeedback struct {
+	IsObstacleCollision bool
+	LastGoodInputs      *referenceframe.LinearInputs
+	// Map of goal name -> spatial distance (no orientation).
+	DistanceTraveledMap map[string]float64
+	DistanceTraveled    float64
+	// Map of goal name -> cost function of each goal.
+	RemainingCost float64
+	// Unnecessary?
+	// LastGoodGoalState map[string]*referenceframe.PoseInFrame
+}
+
+func (pf *pathFeedback) String() string {
+	return fmt.Sprintf("IsObstacleCollision: %v LastGoodInputs: %v DistanceTraveled: %v RemainingCost: %v",
+		pf.IsObstacleCollision, pf.LastGoodInputs, pf.DistanceTraveled, pf.RemainingCost)
+}
+
 type node struct {
 	inputs *referenceframe.LinearInputs
 	// cost of moving from seed to this inputs
 	cost float64
 	// checkPath is true when the path has been checked and was determined to meet constraints
-	checkPath bool
+	checkPath         bool
+	checkPathFeedback pathFeedback
 }
 
 func newConfigurationNode(q *referenceframe.LinearInputs) *node {
@@ -315,16 +333,22 @@ func (sss *solutionSolvingState) process(ctx context.Context, stepSolution *ik.S
 	myNode := &node{inputs: step, cost: myCost}
 	sss.solutions = append(sss.solutions, myNode)
 
-	if myNode.cost < sss.bestScoreWithProblem {
-		sss.bestScoreWithProblem = max(1, myNode.cost)
-	}
+	feedback, whyNot := sss.psc.checkPathFeedback(ctx, sss.psc.start, step, false)
+	if whyNot == nil {
+		sss.logger.Debugf("got score %0.4f @ %v - %s - result: %v",
+			myNode.cost, now, stepSolution.Meta, whyNot)
+		myNode.checkPath = true
 
-	whyNot := sss.psc.checkPath(ctx, sss.psc.start, step, false)
-	sss.logger.Debugf("got score %0.4f @ %v - %s - result: %v", myNode.cost, now, stepSolution.Meta, whyNot)
-	myNode.checkPath = whyNot == nil
-
-	if whyNot == nil && myNode.cost < sss.bestScoreNoProblem {
-		sss.bestScoreNoProblem = myNode.cost
+		if myNode.cost < sss.bestScoreNoProblem {
+			sss.bestScoreNoProblem = myNode.cost
+		}
+	} else {
+		myNode.checkPath = false
+		// sss.logger.Infof("DBG. Feedback: %+v", feedback)
+		if myNode.cost < sss.bestScoreWithProblem {
+			sss.bestScoreWithProblem = max(1, myNode.cost)
+		}
+		myNode.checkPathFeedback = feedback
 	}
 }
 

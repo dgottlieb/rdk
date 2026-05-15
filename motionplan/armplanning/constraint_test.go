@@ -293,3 +293,144 @@ func createFrother(t *testing.T, fs *referenceframe.FrameSystem, floorFrame refe
 	// test.That(t, err, test.ShouldBeNil)
 	// err = fs.AddFrame(testBoxFrame, stickFrame)
 }
+
+func TestPlanSingleGoalReturnsReasonableMidpoint(t *testing.T) {
+	ctx := context.Background()
+	logger := logging.NewTestLogger(t)
+	fs := referenceframe.NewEmptyFrameSystem("arm_with_gripper")
+
+	lite6, err := referenceframe.ParseModelJSONFile(
+		utils.ResolveFile("components/arm/sim/kinematics/lite6.json"), "lite6")
+	test.That(t, err, test.ShouldBeNil)
+
+	err = fs.AddFrame(lite6, fs.World())
+	test.That(t, err, test.ShouldBeNil)
+
+	gripperOffset, err := referenceframe.NewStaticFrame(
+		"gripper_offset", spatialmath.NewPoseFromPoint(r3.Vector{Z: 40}))
+	test.That(t, err, test.ShouldBeNil)
+
+	err = fs.AddFrame(gripperOffset, lite6)
+	test.That(t, err, test.ShouldBeNil)
+
+	gripper, err := referenceframe.ParseModelJSONFile(
+		utils.ResolveFile("referenceframe/testfiles/test_gripper.json"), "gripper")
+	test.That(t, err, test.ShouldBeNil)
+
+	err = fs.AddFrame(gripper, gripperOffset)
+	test.That(t, err, test.ShouldBeNil)
+
+	startInputs := referenceframe.FrameSystemInputs{
+		"lite6":   []referenceframe.Input{0, 0, 0, 0, -1.6, 0},
+		"gripper": []referenceframe.Input{50, 50},
+	}
+
+	heldBox, err := spatialmath.NewEmptyBox(
+		spatialmath.NewPose(r3.Vector{Z: 1}, &spatialmath.OrientationVector{OX: -1}),
+		r3.Vector{X: 40, Y: 40, Z: 40},
+		5, "held_box")
+	test.That(t, err, test.ShouldBeNil)
+
+	heldBoxFrame, err := referenceframe.NewStaticFrameWithGeometry(
+		"held_box",
+		spatialmath.NewPose(r3.Vector{Z: 1}, &spatialmath.OrientationVector{OX: -1}),
+		heldBox,
+	)
+	test.That(t, err, test.ShouldBeNil)
+
+	err = fs.AddFrame(heldBoxFrame, gripper)
+	test.That(t, err, test.ShouldBeNil)
+
+	const floorSize = 1500.0
+	const floorThickness = 20.0
+	floor, err := spatialmath.NewBox(
+		spatialmath.NewZeroPose(),
+		r3.Vector{X: floorSize, Y: floorSize, Z: floorThickness},
+		"floor",
+	)
+	test.That(t, err, test.ShouldBeNil)
+
+	floorFrame, err := referenceframe.NewStaticFrameWithGeometry(
+		"floor",
+		spatialmath.NewPoseFromPoint(r3.Vector{Z: -floorThickness / 2}),
+		floor,
+	)
+	test.That(t, err, test.ShouldBeNil)
+
+	err = fs.AddFrame(floorFrame, fs.World())
+	test.That(t, err, test.ShouldBeNil)
+
+	// Creates a frother that has a base, back, top and a stick hanging from the top out the side.
+	createFrother(t, fs, floorFrame)
+
+	err = client.RemoveAllSpatialObjects()
+	test.That(t, err, test.ShouldBeNil)
+
+	idealInputs := referenceframe.FrameSystemInputs{
+		"lite6":   []referenceframe.Input{5.761739365860415, 1.4095370300288768, 1.608159059662642, -1.0968735049309546, -1.4002610417860264, -3.3 + math.Pi},
+		"gripper": []referenceframe.Input{30, 25},
+	}
+	idealBoxPose := spatialmath.NewPose(
+		r3.Vector{X: 395.0, Y: -95.0, Z: 60.0},
+		&spatialmath.OrientationVectorDegrees{
+			Theta: 100.0, OX: -0.10, OY: 0.30, OZ: 0.94})
+	goalCloud := &referenceframe.PoseCloud{
+		X: 10, Y: 10, Z: 10, OX: 0.2, OY: 0.2, OZ: 0.2, Theta: 360,
+	}
+
+	err = client.DrawFrameSystem(fs, idealInputs)
+	test.That(t, err, test.ShouldBeNil)
+
+	plannerOptions := NewBasicPlannerOptions()
+	plannerOptions.Timeout = defaultTimeout
+	req := &PlanRequest{
+		FrameSystem: fs,
+		Goals: []*PlanState{
+			NewPlanState(referenceframe.FrameSystemPoses{
+				"held_box": referenceframe.NewPoseInFrameWithGoalCloud(
+					referenceframe.World,
+					idealBoxPose,
+					goalCloud,
+				),
+			}, nil),
+		},
+		StartState:     NewPlanState(nil, startInputs),
+		PlannerOptions: plannerOptions,
+		Constraints:    &motionplan.Constraints{},
+	}
+	planManager, err := newPlanManager(ctx, logger, req, &PlanMeta{})
+	test.That(t, err, test.ShouldBeNil)
+
+	linearTraj := []*referenceframe.LinearInputs{req.StartState.LinearConfiguration()}
+	// We want to assert we can find a partial solution that does not require cbirrt.
+	cbirrtAllowed := false
+	newInps, fullSolution, err := planManager.planSingleGoal(ctx, linearTraj[0], req.Goals[0].Poses(), cbirrtAllowed)
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, fullSolution, test.ShouldBeFalse)
+	test.That(t, len(newInps), test.ShouldBeGreaterThan, 0)
+
+	// Create a planManager and call planSingleGoal. Assert it gives us a partial move. Render that
+	// partial move.
+
+	err = client.DrawFrameSystem(fs, newInps[0].ToFrameSystemInputs())
+	test.That(t, err, test.ShouldBeNil)
+
+	// trajectory := plan.Trajectory()
+	// finalInputs := trajectory[len(trajectory)-1]
+	// err = client.DrawFrameSystem(fs, finalInputs)
+	// test.That(t, err, test.ShouldBeNil)
+	//
+	// heldBoxInWorld, err := fs.Transform(
+	//  	finalInputs.ToLinearInputs(),
+	//  	referenceframe.NewPoseInFrame("held_box", spatialmath.NewZeroPose()),
+	//  	referenceframe.World,
+	// )
+	// test.That(t, err, test.ShouldBeNil)
+	//
+	// heldBoxPose := heldBoxInWorld.(*referenceframe.PoseInFrame).Pose()
+	// logger.Infof(
+	//  	"held_box world pose: position=%v orientation=%v",
+	//  	heldBoxPose.Point(),
+	//  	heldBoxPose.Orientation().OrientationVectorDegrees(),
+	// )
+}

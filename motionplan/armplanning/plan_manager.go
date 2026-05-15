@@ -96,13 +96,22 @@ func (pm *planManager) planMultiWaypoint(ctx context.Context) ([]*referenceframe
 
 			for subGoalIdx, sg := range subGoals {
 				singleGoalStart := time.Now()
-				newTraj, err := pm.planSingleGoal(ctx, linearTraj[len(linearTraj)-1], sg, cbirrtAllowed)
-				if err != nil {
-					pm.logger.Infof("\t subgoal %d failed after %v with: %v", subGoalIdx, time.Since(singleGoalStart), err)
-					return linearTraj, i, err
+				var newTraj []*referenceframe.LinearInputs
+				numSplits := 0
+				for fullyReachedGoal := false; !fullyReachedGoal; numSplits++ {
+					newTraj, fullyReachedGoal, err = pm.planSingleGoal(ctx, linearTraj[len(linearTraj)-1], sg, cbirrtAllowed)
+					if err != nil {
+						pm.logger.Infof("\tFailed subgoal. GoalIdx: %v Splits: %v Time: %v Err: %v",
+							subGoalIdx, numSplits, time.Since(singleGoalStart), err)
+						return linearTraj, i, err
+					}
+
+					linearTraj = append(linearTraj, newTraj...)
+					pm.logger.Debugf("\tCreated split. GoalIdx: %v Splits: %v SubTime %v Traj: (%v) -> %v",
+						subGoalIdx, numSplits+1, time.Since(singleGoalStart), len(newTraj), newTraj[0])
 				}
-				pm.logger.Debugf("\t subgoal %d took %v", subGoalIdx, time.Since(singleGoalStart))
-				linearTraj = append(linearTraj, newTraj...)
+				pm.logger.Debugf("\tFinished subgoal. GoalIdx: %v Splits: %v Time %v",
+					subGoalIdx, numSplits, time.Since(singleGoalStart))
 			}
 		}
 		start = to
@@ -175,12 +184,19 @@ func (pm *planManager) planToDirectJoints(
 	return finalSteps.steps, nil
 }
 
+// planSingleGoal returns a set of inputs to reach the input goal. If the new inputs bring the
+// system completely to the goal, the `bool` will be true. This algorithm may return early before
+// reaching the goal, in which case the `bool` is false. If there's an error, no progress was made.
+//
+// When the goal has not been reached, we expect there are a new set of LinearInputs that were fast
+// to compute that move us in the right direction. Think a big easy movement before having to
+// navigate around a constraint at the very end.
 func (pm *planManager) planSingleGoal(
 	ctx context.Context,
 	start *referenceframe.LinearInputs,
 	goal referenceframe.FrameSystemPoses,
 	cbirrtAllowed bool,
-) ([]*referenceframe.LinearInputs, error) {
+) ([]*referenceframe.LinearInputs, bool, error) {
 	ctx, span := trace.StartSpan(ctx, "planSingleGoal")
 	defer span.End()
 	pm.logger.Debug("start configuration", logging.FloatArrayFormat{"", start.GetLinearizedInputs()})
@@ -188,7 +204,7 @@ func (pm *planManager) planSingleGoal(
 
 	psc, err := newPlanSegmentContext(ctx, pm.pc, start, goal)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	for x := range goal {
@@ -197,35 +213,40 @@ func (pm *planManager) planSingleGoal(
 
 	planSeed, err := initRRTSolutions(ctx, psc, pm.logger.Sublogger("solve"))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	if planSeed.steps != nil {
 		pm.logger.Debugf("found an ideal ik solution")
-		return planSeed.steps, nil
+		return planSeed.steps, true, nil
+	}
+
+	if planSeed.partialStep != nil {
+		pm.logger.Debugf("found easy partial step")
+		return []*referenceframe.LinearInputs{planSeed.partialStep}, false, nil
 	}
 
 	if !cbirrtAllowed {
-		return nil, fmt.Errorf("linear with cbirrt not allowed and no direct solutions found")
+		return nil, false, fmt.Errorf("linear with cbirrt not allowed and no direct solutions found")
 	}
 
 	pm.logger.Debugf("initRRTSolutions goalMap size: %d", len(planSeed.maps.goalMap))
 	pathPlanner, err := newCBiRRTMotionPlanner(ctx, pm.pc, psc, pm.logger.Sublogger("cbirrt"))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	finalSteps, err := pathPlanner.rrtRunner(ctx, planSeed.maps)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	finalSteps.steps, err = smoothPath(ctx, psc, finalSteps.steps)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
-	return finalSteps.steps, nil
+	return finalSteps.steps, true, nil
 }
 
 // generateWaypoints will return the list of atomic waypoints that correspond to a specific goal in a plan request.
@@ -293,8 +314,9 @@ func (pm *planManager) generateWaypoints(ctx context.Context, start, goal refere
 type rrtMap map[*node]*node
 
 type rrtSolution struct {
-	steps []*referenceframe.LinearInputs
-	maps  *rrtMaps
+	steps       []*referenceframe.LinearInputs
+	partialStep *referenceframe.LinearInputs
+	maps        *rrtMaps
 }
 
 type rrtMaps struct {
@@ -326,6 +348,9 @@ func initRRTSolutions(ctx context.Context, psc *planSegmentContext, logger loggi
 	rrt.maps.optNode = goalNodes[0]
 	logger.Debugf("optNode cost: %v", rrt.maps.optNode.cost)
 
+	var bestPartialGoal *pathFeedback
+	var bestPartialCost float64 = 1e9
+
 	// `defaultOptimalityMultiple` is > 1.0
 	reasonableCost := max(.01, goalNodes[0].cost) * defaultOptimalityMultiple
 	for _, solution := range goalNodes {
@@ -340,8 +365,21 @@ func initRRTSolutions(ctx context.Context, psc *planSegmentContext, logger loggi
 			rrt.steps = []*referenceframe.LinearInputs{solution.inputs}
 			return rrt, nil
 		}
+
+		if solution.checkPathFeedback.DistanceTraveled > 100 &&
+			solution.checkPathFeedback.RemainingCost < bestPartialCost {
+			bestPartialGoal = &solution.checkPathFeedback
+			bestPartialCost = solution.checkPathFeedback.RemainingCost
+		}
+
 		rrt.maps.goalMap[&node{inputs: solution.inputs}] = nil
 	}
+
+	if bestPartialGoal != nil {
+		rrt.partialStep = bestPartialGoal.LastGoodInputs
+		logger.Infof("DBG. Chosen Feedback: %+v", *bestPartialGoal)
+	}
+
 	rrt.maps.startMap[&node{inputs: seed.inputs}] = nil
 
 	return rrt, nil
