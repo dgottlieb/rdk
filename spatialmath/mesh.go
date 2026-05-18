@@ -112,6 +112,118 @@ type witnessPair struct {
 	t1, t2 *Triangle
 }
 
+// Package-global atomic counters tracking utilization of the per-mesh witness
+// and negative caches. Aggregated across all Mesh instances in the process.
+// Used by cmd-plan (and similar diagnostics) to gauge cache impact without
+// having to enumerate every mesh.
+var (
+	meshWitnessLookups atomic.Uint64
+	meshWitnessHits    atomic.Uint64
+	meshWitnessStale   atomic.Uint64
+	meshWitnessStores  atomic.Uint64
+
+	meshNegCacheLookups   atomic.Uint64
+	meshNegCacheHits      atomic.Uint64
+	meshNegCacheCollision atomic.Uint64 // hash hit, key mismatch
+	meshNegCacheStores    atomic.Uint64
+
+	meshGeomWitnessLookups atomic.Uint64
+	meshGeomWitnessHits    atomic.Uint64
+	meshGeomWitnessStale   atomic.Uint64
+	meshGeomWitnessStores  atomic.Uint64
+)
+
+// MeshCacheStats is a snapshot of per-mesh cache utilization aggregated across
+// all Mesh instances in the process.
+type MeshCacheStats struct {
+	// Mesh-vs-mesh positive witness cache.
+	WitnessLookups uint64
+	WitnessHits    uint64
+	WitnessStale   uint64
+	WitnessStores  uint64
+
+	// Mesh-vs-mesh negative ("no collision") cache.
+	NegCacheLookups   uint64
+	NegCacheHits      uint64
+	NegCacheCollision uint64
+	NegCacheStores    uint64
+
+	// Mesh-vs-non-mesh positive witness cache.
+	GeomWitnessLookups uint64
+	GeomWitnessHits    uint64
+	GeomWitnessStale   uint64
+	GeomWitnessStores  uint64
+}
+
+// hitRate returns hits / lookups, or 0 if no lookups.
+func hitRate(hits, lookups uint64) float64 {
+	if lookups == 0 {
+		return 0
+	}
+	return float64(hits) / float64(lookups)
+}
+
+// WitnessHitRate returns the fraction of mesh-vs-mesh witness lookups that short-circuited.
+func (s MeshCacheStats) WitnessHitRate() float64 { return hitRate(s.WitnessHits, s.WitnessLookups) }
+
+// NegCacheHitRate returns the fraction of mesh-vs-mesh negative-cache lookups that hit.
+func (s MeshCacheStats) NegCacheHitRate() float64 {
+	return hitRate(s.NegCacheHits, s.NegCacheLookups)
+}
+
+// GeomWitnessHitRate returns the fraction of mesh-vs-non-mesh witness lookups that short-circuited.
+func (s MeshCacheStats) GeomWitnessHitRate() float64 {
+	return hitRate(s.GeomWitnessHits, s.GeomWitnessLookups)
+}
+
+// GetMeshCacheStats returns a snapshot of cache counters aggregated across all
+// Mesh instances. Counters are never reset; callers wanting a window should
+// take two snapshots and subtract.
+func GetMeshCacheStats() MeshCacheStats {
+	return MeshCacheStats{
+		WitnessLookups:     meshWitnessLookups.Load(),
+		WitnessHits:        meshWitnessHits.Load(),
+		WitnessStale:       meshWitnessStale.Load(),
+		WitnessStores:      meshWitnessStores.Load(),
+		NegCacheLookups:    meshNegCacheLookups.Load(),
+		NegCacheHits:       meshNegCacheHits.Load(),
+		NegCacheCollision:  meshNegCacheCollision.Load(),
+		NegCacheStores:     meshNegCacheStores.Load(),
+		GeomWitnessLookups: meshGeomWitnessLookups.Load(),
+		GeomWitnessHits:    meshGeomWitnessHits.Load(),
+		GeomWitnessStale:   meshGeomWitnessStale.Load(),
+		GeomWitnessStores:  meshGeomWitnessStores.Load(),
+	}
+}
+
+// CacheEntries returns the current entry counts in this mesh's witness, geom-
+// witness, and negative caches. Walks the underlying sync.Maps — O(n).
+func (m *Mesh) CacheEntries() (witnesses, geomWitnesses, negCache int) {
+	if m.state == nil {
+		return 0, 0, 0
+	}
+	m.state.witnesses.Range(func(_, _ any) bool { witnesses++; return true })
+	m.state.geomWitness.Range(func(_, _ any) bool { geomWitnesses++; return true })
+	m.state.negCache.Range(func(_, _ any) bool { negCache++; return true })
+	return
+}
+
+// ApproxCacheBytes returns a rough byte estimate of this mesh's cache contents.
+// Counts key+value payloads only; sync.Map per-entry overhead is roughly
+// constant and folded in as ~48 bytes/entry.
+func (m *Mesh) ApproxCacheBytes() uint64 {
+	if m.state == nil {
+		return 0
+	}
+	witnesses, geomWitnesses, neg := m.CacheEntries()
+	const witnessPairBytes = 8 + 8 + 48                                // key ptr + value ptr + overhead
+	const geomWitnessBytes = 16 + 8 + 48                               // string header + ptr + overhead
+	const negEntryBytes = 8 + (8 + 24 + 24 + 32 + 32 + 8) + 48         // uint64 + *negCacheEntry contents + overhead
+	return uint64(witnesses)*witnessPairBytes +
+		uint64(geomWitnesses)*geomWitnessBytes +
+		uint64(neg)*negEntryBytes
+}
+
 // negCacheEntry stores a verified "no collision" verdict for a specific pair
 // at specific world poses. The pose snapshot lets us reject hash collisions
 // before returning a stale result.
@@ -429,10 +541,13 @@ func (m *Mesh) CollidesWith(g Geometry, collisionBufferMM float64) (bool, float6
 	// the whole call.
 	if _, isMesh := g.(*Mesh); !isMesh && m.state != nil {
 		if label := g.Label(); label != "" {
+			meshGeomWitnessLookups.Add(1)
 			if v, ok := m.state.geomWitness.Load(label); ok {
 				if witnessTriCollidesWith(v.(*Triangle), m.pose, g, collisionBufferMM) {
+					meshGeomWitnessHits.Add(1)
 					return true, -1, nil
 				}
+				meshGeomWitnessStale.Add(1)
 			}
 		}
 	}
@@ -624,19 +739,25 @@ func (m *Mesh) collidesWithMesh(other *Mesh, collisionBufferMM float64) (bool, f
 		negKeyComputed bool
 	)
 	if m.state != nil && other.state != nil {
+		meshWitnessLookups.Add(1)
 		if v, ok := m.state.witnesses.Load(other.state); ok {
 			wp := v.(*witnessPair)
 			if witnessStillCollides(wp.t1, wp.t2, m.pose, other.pose, collisionBufferMM) {
+				meshWitnessHits.Add(1)
 				return true, -1, nil
 			}
+			meshWitnessStale.Add(1)
 		}
 		negKey = negCacheKey(other.state, m.pose, other.pose)
 		negKeyComputed = true
+		meshNegCacheLookups.Add(1)
 		if v, ok := m.state.negCache.Load(negKey); ok {
 			e := v.(*negCacheEntry)
 			if negCacheEntryMatches(e, other.state, m.pose, other.pose) {
+				meshNegCacheHits.Add(1)
 				return false, math.Sqrt(e.minDistSq), nil
 			}
+			meshNegCacheCollision.Add(1)
 		}
 	}
 
@@ -647,6 +768,7 @@ func (m *Mesh) collidesWithMesh(other *Mesh, collisionBufferMM float64) (bool, f
 	if m.state != nil && other.state != nil {
 		if collides && witness[0] != nil && witness[1] != nil {
 			m.state.witnesses.Store(other.state, &witnessPair{t1: witness[0], t2: witness[1]})
+			meshWitnessStores.Add(1)
 		} else if !collides {
 			if !negKeyComputed {
 				negKey = negCacheKey(other.state, m.pose, other.pose)
@@ -660,6 +782,7 @@ func (m *Mesh) collidesWithMesh(other *Mesh, collisionBufferMM float64) (bool, f
 				minDistSq: dist * dist,
 			}
 			m.state.negCache.Store(negKey, e)
+			meshNegCacheStores.Add(1)
 		}
 	}
 	return collides, dist, nil
@@ -708,6 +831,7 @@ func (m *Mesh) collidesWithGeometryBVH(other Geometry, collisionBufferMM float64
 	if collides && witness != nil && m.state != nil {
 		if otherLabel := other.Label(); otherLabel != "" {
 			m.state.geomWitness.Store(otherLabel, witness)
+			meshGeomWitnessStores.Add(1)
 		}
 	}
 	return collides, dist, nil

@@ -32,6 +32,53 @@ type CollisionCache struct {
 	// for an interpolated edge. Key is the canonical {hashA, hashB} pair —
 	// uint64 fits inside sync.Map's interface{} slot without allocation.
 	edgeResults sync.Map // edgeResultKey -> edgeResultValue
+
+	edgeHits     atomic.Uint64
+	edgeMisses   atomic.Uint64
+	edgeStores   atomic.Uint64
+}
+
+// CollisionCacheStats is a snapshot of cache utilization for reporting.
+type CollisionCacheStats struct {
+	EdgeEntries  int
+	EdgeHits     uint64
+	EdgeMisses   uint64
+	EdgeStores   uint64
+	// EdgeBytesApprox is a rough estimate of bytes held by edgeResults entries
+	// (key + value only, not sync.Map overhead).
+	EdgeBytesApprox uint64
+}
+
+// HitRate returns EdgeHits / (EdgeHits + EdgeMisses), or 0 if no lookups.
+func (s CollisionCacheStats) HitRate() float64 {
+	total := s.EdgeHits + s.EdgeMisses
+	if total == 0 {
+		return 0
+	}
+	return float64(s.EdgeHits) / float64(total)
+}
+
+// Stats returns a snapshot of cache utilization. Walks the sync.Map to count
+// entries — O(n) but only called for reporting.
+func (c *CollisionCache) Stats() CollisionCacheStats {
+	if c == nil {
+		return CollisionCacheStats{}
+	}
+	entries := 0
+	c.edgeResults.Range(func(_, _ any) bool {
+		entries++
+		return true
+	})
+	// edgeResultKey is 16 bytes (two uint64); edgeResultValue is 1 byte but
+	// padded to 8. Add ~32 bytes for sync.Map's per-entry overhead.
+	const bytesPerEntry = 16 + 8 + 32
+	return CollisionCacheStats{
+		EdgeEntries:     entries,
+		EdgeHits:        c.edgeHits.Load(),
+		EdgeMisses:      c.edgeMisses.Load(),
+		EdgeStores:      c.edgeStores.Load(),
+		EdgeBytesApprox: uint64(entries) * bytesPerEntry,
+	}
 }
 
 // NewCollisionCache constructs an empty cache. Safe for concurrent use.
@@ -64,8 +111,10 @@ func (c *CollisionCache) LookupEdgeResult(hashA, hashB uint64) (isClear, ok bool
 	}
 	v, ok := c.edgeResults.Load(edgeResultKey{a: hashA, b: hashB})
 	if !ok {
+		c.edgeMisses.Add(1)
 		return false, false
 	}
+	c.edgeHits.Add(1)
 	return v.(edgeResultValue).isClear, true
 }
 
@@ -78,4 +127,5 @@ func (c *CollisionCache) StoreEdgeResult(hashA, hashB uint64, isClear bool) {
 		hashA, hashB = hashB, hashA
 	}
 	c.edgeResults.Store(edgeResultKey{a: hashA, b: hashB}, edgeResultValue{isClear: isClear})
+	c.edgeStores.Add(1)
 }

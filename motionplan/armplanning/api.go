@@ -181,6 +181,7 @@ type PlanMeta struct {
 	Partial        bool
 	PartialError   error
 	GoalsProcessed int
+	CollisionCache motionplan.CollisionCacheStats
 }
 
 // PlanMotion plans a motion from a provided plan request.
@@ -230,6 +231,7 @@ func PlanMotion(ctx context.Context, parentLogger logging.Logger, request *PlanR
 	}
 
 	meta.GoalsProcessed = goalsProcessed
+	meta.CollisionCache = sfPlanner.pc.collisionCache.Stats()
 
 	t, err := motionplan.NewSimplePlanFromTrajectory(trajAsInps, request.FrameSystem)
 	if err != nil {
