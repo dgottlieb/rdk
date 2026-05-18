@@ -13,6 +13,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/pprof"
 	"slices"
 	"sort"
@@ -292,6 +293,33 @@ func realMain() error {
 		}
 	}
 
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+	const mib = 1024 * 1024
+	mylog.Printf("memory: heapAlloc=%dMiB heapInuse=%dMiB heapObjects=%d totalAlloc=%dMiB sys=%dMiB numGC=%d",
+		memStats.HeapAlloc/mib, memStats.HeapInuse/mib, memStats.HeapObjects,
+		memStats.TotalAlloc/mib, memStats.Sys/mib, memStats.NumGC)
+
+	cacheStats := meta.CollisionCache
+	mylog.Printf("collision cache (edge): entries=%d hits=%d misses=%d stores=%d hitRate=%.3f approxBytes=%d (~%.2fKiB)",
+		cacheStats.EdgeEntries, cacheStats.EdgeHits, cacheStats.EdgeMisses, cacheStats.EdgeStores,
+		cacheStats.HitRate(), cacheStats.EdgeBytesApprox, float64(cacheStats.EdgeBytesApprox)/1024)
+
+	meshStats := spatialmath.GetMeshCacheStats()
+	mylog.Printf("mesh cache (mesh-vs-mesh witness): lookups=%d hits=%d stale=%d stores=%d hitRate=%.3f",
+		meshStats.WitnessLookups, meshStats.WitnessHits, meshStats.WitnessStale, meshStats.WitnessStores,
+		meshStats.WitnessHitRate())
+	mylog.Printf("mesh cache (mesh-vs-mesh negCache): lookups=%d hits=%d hashCollisions=%d stores=%d hitRate=%.3f",
+		meshStats.NegCacheLookups, meshStats.NegCacheHits, meshStats.NegCacheCollision, meshStats.NegCacheStores,
+		meshStats.NegCacheHitRate())
+	mylog.Printf("mesh cache (mesh-vs-geom witness): lookups=%d hits=%d stale=%d stores=%d hitRate=%.3f",
+		meshStats.GeomWitnessLookups, meshStats.GeomWitnessHits, meshStats.GeomWitnessStale, meshStats.GeomWitnessStores,
+		meshStats.GeomWitnessHitRate())
+
+	meshCount, witnessEntries, geomWitnessEntries, negEntries, totalMeshCacheBytes := walkMeshCacheUsage(req)
+	mylog.Printf("mesh cache memory: %d meshes, witnessEntries=%d geomWitnessEntries=%d negCacheEntries=%d approxBytes=%d (~%.2fKiB)",
+		meshCount, witnessEntries, geomWitnessEntries, negEntries, totalMeshCacheBytes, float64(totalMeshCacheBytes)/1024)
+
 	for i := 0; i < *loop; i++ {
 		err = visualize(req, plan, mylog, *showPoses)
 		if err != nil {
@@ -315,6 +343,45 @@ func realMain() error {
 	}
 
 	return nil
+}
+
+// walkMeshCacheUsage finds every spatialmath.Mesh reachable from the request
+// (frame-system geometries + world-state obstacles) and sums their cache
+// entries. Dedupes by *Mesh pointer so Transform-cloned copies sharing a
+// *meshState aren't double-counted.
+func walkMeshCacheUsage(req *armplanning.PlanRequest) (meshes, witnesses, geomWitnesses, negCache int, approxBytes uint64) {
+	seen := map[*spatialmath.Mesh]struct{}{}
+	visit := func(geoms []spatialmath.Geometry) {
+		for _, g := range geoms {
+			mesh, ok := g.(*spatialmath.Mesh)
+			if !ok {
+				continue
+			}
+			if _, already := seen[mesh]; already {
+				continue
+			}
+			seen[mesh] = struct{}{}
+			meshes++
+			witnessEntries, geomEntries, negEntries := mesh.CacheEntries()
+			witnesses += witnessEntries
+			geomWitnesses += geomEntries
+			negCache += negEntries
+			approxBytes += mesh.ApproxCacheBytes()
+		}
+	}
+
+	gifs, err := referenceframe.FrameSystemGeometries(req.FrameSystem, req.StartState.Configuration())
+	if err == nil {
+		for _, gif := range gifs {
+			visit(gif.Geometries())
+		}
+	}
+	if req.WorldState != nil {
+		for _, gif := range req.WorldState.Obstacles() {
+			visit(gif.Geometries())
+		}
+	}
+	return
 }
 
 func visualize(req *armplanning.PlanRequest, plan motionplan.Plan, mylog *log.Logger, showPoses bool) error {
