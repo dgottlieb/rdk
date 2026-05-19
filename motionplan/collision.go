@@ -3,7 +3,6 @@ package motionplan
 import (
 	"fmt"
 	"math"
-	"os"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -191,11 +190,12 @@ func checkCollisionsHinted(
 				return false, err
 			}
 		}
-		if elapsed := time.Since(start); elapsed > slowCollisionThreshold {
-			rp := relativePoseHash(xGeometry, yGeometry)
-			fmt.Fprintf(os.Stderr, "slow collision check %v: %s vs %s collides=%v dist=%.4f rposeHash=%x\n",
-				elapsed, xName, yName, isCollision, distance, rp)
-		}
+		_ = start
+		// if elapsed := time.Since(start); elapsed > slowCollisionThreshold {
+		//  	// rp := relativePoseHash(xGeometry, yGeometry)
+		//  	// fmt.Fprintf(os.Stderr, "slow collision check %v: %s vs %s collides=%v dist=%.4f rposeHash=%x\n",
+		//  	//  	elapsed, xName, yName, isCollision, distance, rp)
+		// }
 		if isCollision {
 			return recordCollision(xName, yName), nil
 		}

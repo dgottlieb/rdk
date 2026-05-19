@@ -142,8 +142,8 @@ func realMain() error {
 	start := time.Now()
 
 	metricsExporter := perf.NewDevelopmentExporterWithOptions(perf.DevelopmentExporterOptions{
-		ReportingInterval: time.Second * 10,
-		TracesDisabled:    true,
+		// ReportingInterval: time.Second * 10,
+		TracesDisabled: true,
 	})
 	if err := metricsExporter.Start(); err != nil {
 		return err
@@ -159,22 +159,58 @@ func realMain() error {
 		// Suppress logs by using a logger that has no appenders to output to.
 		mpLogger = logging.NewBlankLogger("mp")
 	}
-	plan, meta, err := armplanning.PlanMotion(ctx, mpLogger, req)
+
+	var plan motionplan.Plan
+	var meta *armplanning.PlanMeta
+	prevMeshStats := spatialmath.GetMeshCacheStats()
+	for loopIdx := 0; loopIdx < *loop; loopIdx++ {
+		iterStart := time.Now()
+		var iterErr error
+		plan, meta, iterErr = armplanning.PlanMotion(ctx, mpLogger, req)
+		iterDur := time.Since(iterStart)
+		if iterErr != nil {
+			if plan != nil {
+				mylog.Printf("[loop %d] error but partial result of length: %d", loopIdx, len(plan.Trajectory()))
+			}
+			return iterErr
+		}
+
+		cur := spatialmath.GetMeshCacheStats()
+		d := spatialmath.MeshCacheStats{
+			WitnessLookups: cur.WitnessLookups - prevMeshStats.WitnessLookups,
+			WitnessHits:    cur.WitnessHits - prevMeshStats.WitnessHits,
+			WitnessStale:   cur.WitnessStale - prevMeshStats.WitnessStale,
+			WitnessStores:  cur.WitnessStores - prevMeshStats.WitnessStores,
+
+			NegCacheLookups:   cur.NegCacheLookups - prevMeshStats.NegCacheLookups,
+			NegCacheHits:      cur.NegCacheHits - prevMeshStats.NegCacheHits,
+			NegCacheCollision: cur.NegCacheCollision - prevMeshStats.NegCacheCollision,
+			NegCacheStores:    cur.NegCacheStores - prevMeshStats.NegCacheStores,
+
+			GeomWitnessLookups: cur.GeomWitnessLookups - prevMeshStats.GeomWitnessLookups,
+			GeomWitnessHits:    cur.GeomWitnessHits - prevMeshStats.GeomWitnessHits,
+			GeomWitnessStale:   cur.GeomWitnessStale - prevMeshStats.GeomWitnessStale,
+			GeomWitnessStores:  cur.GeomWitnessStores - prevMeshStats.GeomWitnessStores,
+		}
+		_, witnessEntries, geomWitnessEntries, negEntries, totalMeshCacheBytes := walkMeshCacheUsage(req)
+		mylog.Printf("[loop %d] took=%v trajLen=%d | witness: lookups=%d hits=%d(%.3f) stale=%d stores=%d | neg: lookups=%d hits=%d(%.3f) stores=%d | geom: lookups=%d hits=%d(%.3f) stores=%d | cache entries: witness=%d geomWitness=%d neg=%d (~%.1fKiB)",
+			loopIdx, iterDur.Truncate(time.Millisecond), len(plan.Trajectory()),
+			d.WitnessLookups, d.WitnessHits, d.WitnessHitRate(), d.WitnessStale, d.WitnessStores,
+			d.NegCacheLookups, d.NegCacheHits, d.NegCacheHitRate(), d.NegCacheStores,
+			d.GeomWitnessLookups, d.GeomWitnessHits, d.GeomWitnessHitRate(), d.GeomWitnessStores,
+			witnessEntries, geomWitnessEntries, negEntries, float64(totalMeshCacheBytes)/1024)
+		prevMeshStats = cur
+	}
+
 	if err := trace.Shutdown(ctx); err != nil {
 		logger.Errorw("Got error while shutting down tracing", "err", err)
 	}
 	metricsExporter.Stop()
 	if *interactive {
-		if interactiveErr := doInteractive(req, plan, err, mylog, *showPoses); interactiveErr != nil {
+		if interactiveErr := doInteractive(req, plan, nil, mylog, *showPoses); interactiveErr != nil {
 			logger.Fatal("Interactive mode failed:", interactiveErr)
 		}
 		return nil
-	}
-	if err != nil {
-		if plan != nil {
-			mylog.Printf("error but partial result of length: %d", len(plan.Trajectory()))
-		}
-		return err
 	}
 
 	if len(plan.Path()) != len(plan.Trajectory()) {
@@ -320,12 +356,9 @@ func realMain() error {
 	mylog.Printf("mesh cache memory: %d meshes, witnessEntries=%d geomWitnessEntries=%d negCacheEntries=%d approxBytes=%d (~%.2fKiB)",
 		meshCount, witnessEntries, geomWitnessEntries, negEntries, totalMeshCacheBytes, float64(totalMeshCacheBytes)/1024)
 
-	for i := 0; i < *loop; i++ {
-		err = visualize(req, plan, mylog, *showPoses)
-		if err != nil {
-			mylog.Println("Couldn't visualize motion plan. Motion-tools server is probably not running. Skipping. Err:", err)
-			break
-		}
+	err = visualize(req, plan, mylog, *showPoses)
+	if err != nil {
+		mylog.Println("Couldn't visualize motion plan. Motion-tools server is probably not running. Skipping. Err:", err)
 	}
 
 	if *waypointsFile != "" {
