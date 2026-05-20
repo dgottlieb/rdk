@@ -175,12 +175,26 @@ func PlanFrameMotion(ctx context.Context,
 	return plan.Trajectory().GetFrameInputs(f.Name())
 }
 
+// SolutionNodeInfo captures per-node data from getSolutions for visualization and debugging.
+type SolutionNodeInfo struct {
+	// Score is the cost of moving from the start configuration to this node.
+	Score float64
+	// CheckPath is true when the straight-line path from start to this node passed all constraints.
+	CheckPath bool
+	// IsObstacleCollision is true when CheckPath is false and the failure was due to a collision
+	// with an obstacle (as opposed to a non-collision constraint violation).
+	IsObstacleCollision bool
+}
+
 // PlanMeta is meta data about plan generation.
 type PlanMeta struct {
 	Duration       time.Duration
 	Partial        bool
 	PartialError   error
 	GoalsProcessed int
+	// SolutionNodes contains info about each IK solution node scored and path-checked during
+	// planning. Nodes are appended in order across all goals in a multi-waypoint plan.
+	SolutionNodes []SolutionNodeInfo
 }
 
 // PlanMotion plans a motion from a provided plan request.

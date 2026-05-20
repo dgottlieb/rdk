@@ -348,6 +348,14 @@ func initRRTSolutions(ctx context.Context, psc *planSegmentContext, logger loggi
 	rrt.maps.optNode = goalNodes[0]
 	logger.Debugf("optNode cost: %v", rrt.maps.optNode.cost)
 
+	for _, goalNode := range goalNodes {
+		psc.pc.planMeta.SolutionNodes = append(psc.pc.planMeta.SolutionNodes, SolutionNodeInfo{
+			Score:               goalNode.cost,
+			CheckPath:           goalNode.checkPath,
+			IsObstacleCollision: goalNode.checkPathFeedback.IsObstacleCollision,
+		})
+	}
+
 	var bestPartialGoal *pathFeedback
 	var bestPartialCost float64 = 1e9
 
