@@ -225,6 +225,11 @@ func newSolutionSolvingState(ctx context.Context, psc *planSegmentContext, logge
 
 	sss.moving, sss.nonmoving = sss.psc.motionChains.framesFilteredByMovingAndNonmoving()
 
+	if psc.pc.planMeta.CollectSolutionDiagnostics {
+		perGoal := &psc.pc.planMeta.PerGoal[len(psc.pc.planMeta.PerGoal)-1]
+		perGoal.ConstraintFailuresByType = make(map[string]int)
+	}
+
 	sss.startTime = time.Now() // do this after we check the cache, etc.
 
 	return sss, nil
@@ -596,11 +601,13 @@ solutionLoop:
 
 func (sss *solutionSolvingState) flushFailuresToMeta() {
 	meta := sss.psc.pc.planMeta
-	if meta.ConstraintFailuresByType == nil {
-		meta.ConstraintFailuresByType = make(map[string]int)
+	if !meta.CollectSolutionDiagnostics {
+		return
 	}
+
+	perGoal := &meta.PerGoal[len(meta.PerGoal)-1]
 	for constraintErr, configurations := range sss.failures.FailuresByType {
-		meta.ConstraintFailuresByType[constraintErr] += len(configurations)
+		perGoal.ConstraintFailuresByType[constraintErr] += len(configurations)
 	}
 }
 

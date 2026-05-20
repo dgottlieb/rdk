@@ -338,6 +338,10 @@ func initRRTSolutions(ctx context.Context, psc *planSegmentContext, logger loggi
 		},
 	}
 
+	if psc.pc.planMeta.CollectSolutionDiagnostics {
+		psc.pc.planMeta.PerGoal = append(psc.pc.planMeta.PerGoal, PerGoalMeta{})
+	}
+
 	seed := newConfigurationNode(psc.start)
 	// goalNodes are sorted from lowest cost to highest.
 	goalNodes, err := getSolutions(ctx, psc, logger)
@@ -348,11 +352,14 @@ func initRRTSolutions(ctx context.Context, psc *planSegmentContext, logger loggi
 	rrt.maps.optNode = goalNodes[0]
 	logger.Debugf("optNode cost: %v", rrt.maps.optNode.cost)
 
-	for _, goalNode := range goalNodes {
-		psc.pc.planMeta.SolutionNodes = append(psc.pc.planMeta.SolutionNodes, SolutionNodeInfo{
-			Score:          goalNode.cost,
-			CheckPathError: goalNode.checkPathError,
-		})
+	if psc.pc.planMeta.CollectSolutionDiagnostics {
+		perGoal := &psc.pc.planMeta.PerGoal[len(psc.pc.planMeta.PerGoal)-1]
+		for _, goalNode := range goalNodes {
+			perGoal.SolutionNodes = append(perGoal.SolutionNodes, SolutionNodeInfo{
+				Score:          goalNode.cost,
+				CheckPathError: goalNode.checkPathError,
+			})
+		}
 	}
 
 	var bestPartialGoal *pathFeedback

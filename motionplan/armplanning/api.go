@@ -184,18 +184,28 @@ type SolutionNodeInfo struct {
 	CheckPathError error
 }
 
+// PerGoalMeta holds diagnostic data for a single invocation of initRRTSolutions.
+// Only populated when PlannerOptions.CollectSolutionDiagnostics is true.
+type PerGoalMeta struct {
+	// SolutionNodes contains info about each IK solution node scored and path-checked.
+	SolutionNodes []SolutionNodeInfo
+	// ConstraintFailuresByType maps constraint error strings to the number of IK candidate
+	// solutions that failed that constraint.
+	ConstraintFailuresByType map[string]int
+}
+
 // PlanMeta is meta data about plan generation.
 type PlanMeta struct {
 	Duration       time.Duration
 	Partial        bool
 	PartialError   error
 	GoalsProcessed int
-	// SolutionNodes contains info about each IK solution node scored and path-checked during
-	// planning. Nodes are appended in order across all goals in a multi-waypoint plan.
-	SolutionNodes []SolutionNodeInfo
-	// ConstraintFailuresByType maps constraint error strings to the number of IK candidate
-	// solutions that failed that constraint. Counts are accumulated across all goals.
-	ConstraintFailuresByType map[string]int
+	// CollectSolutionDiagnostics is copied from PlannerOptions and gates whether PerGoal is
+	// populated.
+	CollectSolutionDiagnostics bool
+	// PerGoal holds diagnostic data indexed by initRRTSolutions invocation order. Each top-level
+	// goal, sub-goal, and planning split produces one entry.
+	PerGoal []PerGoalMeta
 }
 
 // PlanMotion plans a motion from a provided plan request.

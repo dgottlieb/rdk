@@ -33,6 +33,7 @@ type planContext struct {
 func newPlanContext(ctx context.Context, logger logging.Logger, request *PlanRequest, meta *PlanMeta) (*planContext, error) {
 	_, span := trace.StartSpan(ctx, "newPlanContext")
 	defer span.End()
+	meta.CollectSolutionDiagnostics = request.PlannerOptions.CollectSolutionDiagnostics
 	pc := &planContext{
 		fs:                        request.FrameSystem,
 		configurationDistanceFunc: motionplan.GetConfigurationDistanceFunc(request.PlannerOptions.ConfigurationDistanceMetric),
