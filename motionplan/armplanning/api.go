@@ -179,11 +179,9 @@ func PlanFrameMotion(ctx context.Context,
 type SolutionNodeInfo struct {
 	// Score is the cost of moving from the start configuration to this node.
 	Score float64
-	// CheckPath is true when the straight-line path from start to this node passed all constraints.
-	CheckPath bool
-	// IsObstacleCollision is true when CheckPath is false and the failure was due to a collision
-	// with an obstacle (as opposed to a non-collision constraint violation).
-	IsObstacleCollision bool
+	// CheckPathError is nil when the straight-line path from start to this node passed all
+	// constraints, or the constraint violation error otherwise.
+	CheckPathError error
 }
 
 // PlanMeta is meta data about plan generation.
@@ -195,6 +193,9 @@ type PlanMeta struct {
 	// SolutionNodes contains info about each IK solution node scored and path-checked during
 	// planning. Nodes are appended in order across all goals in a multi-waypoint plan.
 	SolutionNodes []SolutionNodeInfo
+	// ConstraintFailuresByType maps constraint error strings to the number of IK candidate
+	// solutions that failed that constraint. Counts are accumulated across all goals.
+	ConstraintFailuresByType map[string]int
 }
 
 // PlanMotion plans a motion from a provided plan request.

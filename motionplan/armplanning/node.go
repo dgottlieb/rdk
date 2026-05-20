@@ -72,8 +72,8 @@ type node struct {
 	inputs *referenceframe.LinearInputs
 	// cost of moving from seed to this inputs
 	cost float64
-	// checkPath is true when the path has been checked and was determined to meet constraints
-	checkPath         bool
+	// checkPathError is nil when the straight-line path to this node meets all constraints.
+	checkPathError    error
 	checkPathFeedback pathFeedback
 }
 
@@ -334,16 +334,14 @@ func (sss *solutionSolvingState) process(ctx context.Context, stepSolution *ik.S
 	sss.solutions = append(sss.solutions, myNode)
 
 	feedback, whyNot := sss.psc.checkPathFeedback(ctx, sss.psc.start, step, false)
+	myNode.checkPathError = whyNot
 	if whyNot == nil {
 		sss.logger.Debugf("got score %0.4f @ %v - %s - result: %v",
 			myNode.cost, now, stepSolution.Meta, whyNot)
-		myNode.checkPath = true
-
 		if myNode.cost < sss.bestScoreNoProblem {
 			sss.bestScoreNoProblem = myNode.cost
 		}
 	} else {
-		myNode.checkPath = false
 		// sss.logger.Infof("DBG. Feedback: %+v", feedback)
 		if myNode.cost < sss.bestScoreWithProblem {
 			sss.bestScoreWithProblem = max(1, myNode.cost)
@@ -568,6 +566,8 @@ solutionLoop:
 		return nil, fmt.Errorf("solver had an error: %w", solveError)
 	}
 
+	solvingState.flushFailuresToMeta()
+
 	if len(solvingState.solutions) == 0 {
 		if solvingState.fatal != nil {
 			return nil, solvingState.fatal
@@ -592,6 +592,16 @@ solutionLoop:
 	}
 
 	return solvingState.solutions, nil
+}
+
+func (sss *solutionSolvingState) flushFailuresToMeta() {
+	meta := sss.psc.pc.planMeta
+	if meta.ConstraintFailuresByType == nil {
+		meta.ConstraintFailuresByType = make(map[string]int)
+	}
+	for constraintErr, configurations := range sss.failures.FailuresByType {
+		meta.ConstraintFailuresByType[constraintErr] += len(configurations)
+	}
 }
 
 // neutralBias computes a small cost penalty for rotational joints that are far from the center of their range.

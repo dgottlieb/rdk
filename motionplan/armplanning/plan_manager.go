@@ -350,9 +350,8 @@ func initRRTSolutions(ctx context.Context, psc *planSegmentContext, logger loggi
 
 	for _, goalNode := range goalNodes {
 		psc.pc.planMeta.SolutionNodes = append(psc.pc.planMeta.SolutionNodes, SolutionNodeInfo{
-			Score:               goalNode.cost,
-			CheckPath:           goalNode.checkPath,
-			IsObstacleCollision: goalNode.checkPathFeedback.IsObstacleCollision,
+			Score:          goalNode.cost,
+			CheckPathError: goalNode.checkPathError,
 		})
 	}
 
@@ -367,7 +366,7 @@ func initRRTSolutions(ctx context.Context, psc *planSegmentContext, logger loggi
 			continue
 		}
 
-		if solution.checkPath {
+		if solution.checkPathError == nil {
 			// If we've already checked the path of a solution that is "reasonable", we can just
 			// return now. Otherwise, continue to initialize goal map with keys.
 			rrt.steps = []*referenceframe.LinearInputs{solution.inputs}
