@@ -182,6 +182,8 @@ type SolutionNodeInfo struct {
 	// CheckPathError is nil when the straight-line path from start to this node passed all
 	// constraints, or the constraint violation error otherwise.
 	CheckPathError error
+	// Inputs is the goal configuration for this IK solution.
+	Inputs *referenceframe.LinearInputs
 }
 
 // PerGoalMeta holds diagnostic data for a single invocation of initRRTSolutions.

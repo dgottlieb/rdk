@@ -358,6 +358,7 @@ func initRRTSolutions(ctx context.Context, psc *planSegmentContext, logger loggi
 			perGoal.SolutionNodes = append(perGoal.SolutionNodes, SolutionNodeInfo{
 				Score:          goalNode.cost,
 				CheckPathError: goalNode.checkPathError,
+				Inputs:         goalNode.inputs,
 			})
 		}
 	}
