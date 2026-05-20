@@ -455,6 +455,8 @@ func handlePlanRun(logger logging.Logger) http.HandlerFunc {
 			return
 		}
 
+		armplanning.ClearSeedCache()
+
 		if req.PlannerOptions == nil {
 			req.PlannerOptions = armplanning.NewBasicPlannerOptions()
 		}
