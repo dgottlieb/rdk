@@ -184,6 +184,9 @@ type SolutionNodeInfo struct {
 	CheckPathError error
 	// Inputs is the goal configuration for this IK solution.
 	Inputs *referenceframe.LinearInputs
+	// LastGoodInputs is the last interpolated configuration before the checkPath failure.
+	// Nil when CheckPathError is nil.
+	LastGoodInputs *referenceframe.LinearInputs
 }
 
 // PerGoalMeta holds diagnostic data for a single invocation of initRRTSolutions.

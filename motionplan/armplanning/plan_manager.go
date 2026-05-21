@@ -359,6 +359,7 @@ func initRRTSolutions(ctx context.Context, psc *planSegmentContext, logger loggi
 				Score:          goalNode.cost,
 				CheckPathError: goalNode.checkPathError,
 				Inputs:         goalNode.inputs,
+				LastGoodInputs: goalNode.checkPathFeedback.LastGoodInputs,
 			})
 		}
 	}

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	viz "github.com/viam-labs/motion-tools/client/client"
@@ -23,9 +24,15 @@ import (
 )
 
 const (
-	rdkRoot          = "/home/dgottlieb/viam/rdk"
-	planFilesRoot    = rdkRoot + "/mplans"
+	rdkRoot           = "/home/dgottlieb/viam/rdk"
+	planFilesRoot     = rdkRoot + "/mplans"
 	renderFramePeriod = 5 * time.Millisecond
+	// shadowCount is the number of intermediate configurations to draw between start and end when
+	// rendering shadows along a straight-line path. We interpolate directly instead of going through
+	// InterpolateSegmentFS because that helper also enforces a per-joint step size (~range/1000)
+	// which produces hundreds-to-thousands of steps for typical arm motions.
+	shadowCount       = 10
+	shadowFramePeriod = 100 * time.Millisecond
 )
 
 // ---- templates ----
@@ -129,6 +136,21 @@ var detailTmpl = template.Must(template.New("detail").Parse(`<!DOCTYPE html>
 &nbsp;<button onclick="renderState()">Render Start State</button>
 <div id="result"></div>
 
+<h2>Start Inputs</h2>
+{{if .StartInputs}}
+<table>
+  <tr><th>Frame</th><th>Inputs</th></tr>
+  {{range .StartInputs}}
+  <tr>
+    <td>{{.Name}}</td>
+    <td><code>{{.Inputs}}</code></td>
+  </tr>
+  {{end}}
+</table>
+{{else}}
+<p><em>No moving-frame inputs in start state.</em></p>
+{{end}}
+
 <h2>Frame System</h2>
 <table>
   <tr><th>Frame</th><th>DoF</th><th>Parent</th></tr>
@@ -174,7 +196,7 @@ function runPlanning() {
       (data.per_goal || []).forEach((pg, goalIdx) => {
         html += '<h3>Goal ' + goalIdx + '</h3>';
         html += buildSolutionTable('{{.File}}', 'Valid solutions', pg.valid_solutions || [], false);
-        html += buildSolutionTable('{{.File}}', 'Invalid solutions', pg.invalid_solutions || [], true);
+        html += buildSolutionTable('{{.File}}', 'checkPath failures', pg.check_path_failures || [], true);
         if (pg.constraint_failures_by_type && Object.keys(pg.constraint_failures_by_type).length) {
           html += '<h4>Constraint failures</h4><table><tr><th>Constraint</th><th>Count</th></tr>';
           for (const [k, v] of Object.entries(pg.constraint_failures_by_type)) {
@@ -192,19 +214,35 @@ function buildSolutionTable(file, title, solutions, showError) {
   if (!solutions.length) return '';
   let html = '<h4>' + title + ' (' + solutions.length + ')</h4>';
   html += '<table><tr><th>Score</th><th>Inputs</th>';
-  if (showError) html += '<th>Error</th>';
-  html += '<th></th></tr>';
+  if (showError) html += '<th>Error</th><th>Last good inputs</th>';
+  html += '</tr>';
   for (const sn of solutions) {
-    const inputStr = Object.entries(sn.inputs)
-      .map(([f, vs]) => f + ': [' + vs.map(v => v.toFixed(4)).join(', ') + ']')
-      .join('<br>');
-    html += '<tr><td>' + sn.score.toFixed(4) + '</td><td><code>' + inputStr + '</code></td>';
-    if (showError) html += '<td>' + escHtml(sn.check_path_error) + '</td>';
-    html += '<td><button onclick=\'renderSolution(' + JSON.stringify(file) + ',' +
-            JSON.stringify(sn.inputs) + ')\'>Render</button></td></tr>';
+    html += '<tr><td>' + sn.score.toFixed(4) + '</td>';
+    const inputsArg = JSON.stringify(sn.inputs);
+    html += '<td><code>' + formatInputs(sn.inputs) + '</code><br>' +
+            '<button onclick=\'renderSolution(' + JSON.stringify(file) + ',' + inputsArg + ')\'>Render</button> ' +
+            '<button onclick=\'renderShadows(' + JSON.stringify(file) + ',' + inputsArg + ')\'>Shadows</button></td>';
+    if (showError) {
+      html += '<td>' + escHtml(sn.check_path_error) + '</td>';
+      if (sn.last_good_inputs) {
+        const lastArg = JSON.stringify(sn.last_good_inputs);
+        html += '<td><code>' + formatInputs(sn.last_good_inputs) + '</code><br>' +
+                '<button onclick=\'renderSolution(' + JSON.stringify(file) + ',' + lastArg + ')\'>Render</button> ' +
+                '<button onclick=\'renderShadows(' + JSON.stringify(file) + ',' + lastArg + ')\'>Shadows</button></td>';
+      } else {
+        html += '<td></td>';
+      }
+    }
+    html += '</tr>';
   }
   html += '</table>';
   return html;
+}
+
+function formatInputs(inputs) {
+  return Object.entries(inputs)
+    .map(([f, vs]) => f + ': [' + vs.map(v => v.toFixed(4)).join(', ') + ']')
+    .join('<br>');
 }
 
 function renderSolution(file, inputs) {
@@ -214,6 +252,15 @@ function renderSolution(file, inputs) {
     body: JSON.stringify(inputs),
   }).then(r => { if (!r.ok) r.text().then(msg => console.error('Render error: ' + msg)); })
     .catch(err => console.error('Render error: ' + err));
+}
+
+function renderShadows(file, inputs) {
+  fetch('/render-shadows?file=' + encodeURIComponent(file), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(inputs),
+  }).then(r => { if (!r.ok) r.text().then(msg => console.error('Shadows error: ' + msg)); })
+    .catch(err => console.error('Shadows error: ' + err));
 }
 
 function escHtml(s) {
@@ -233,8 +280,14 @@ type frameInfo struct {
 }
 
 type detailData struct {
-	File   string
-	Frames []frameInfo
+	File        string
+	Frames      []frameInfo
+	StartInputs []frameInputs
+}
+
+type frameInputs struct {
+	Name   string
+	Inputs string
 }
 
 type planRunResult struct {
@@ -249,7 +302,7 @@ type planRunResult struct {
 
 type perGoalResult struct {
 	ValidSolutions           []solutionNodeResult `json:"valid_solutions,omitempty"`
-	InvalidSolutions         []solutionNodeResult `json:"invalid_solutions,omitempty"`
+	CheckPathFailures        []solutionNodeResult `json:"check_path_failures,omitempty"`
 	ConstraintFailuresByType map[string]int       `json:"constraint_failures_by_type,omitempty"`
 }
 
@@ -257,6 +310,7 @@ type solutionNodeResult struct {
 	Score          float64              `json:"score"`
 	CheckPathError string               `json:"check_path_error,omitempty"`
 	Inputs         map[string][]float64 `json:"inputs"`
+	LastGoodInputs map[string][]float64 `json:"last_good_inputs,omitempty"`
 }
 
 func linearInputsToFloats(li *referenceframe.LinearInputs) map[string][]float64 {
@@ -321,6 +375,22 @@ func buildFrameInfo(fs *referenceframe.FrameSystem) []frameInfo {
 		return frames[idx].Name < frames[jdx].Name
 	})
 	return frames
+}
+
+func buildStartInputs(cfg referenceframe.FrameSystemInputs) []frameInputs {
+	var rows []frameInputs
+	for name, inputs := range cfg {
+		if len(inputs) == 0 {
+			continue
+		}
+		parts := make([]string, len(inputs))
+		for i, v := range inputs {
+			parts[i] = strconv.FormatFloat(v, 'f', 4, 64)
+		}
+		rows = append(rows, frameInputs{Name: name, Inputs: "[" + strings.Join(parts, ", ") + "]"})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+	return rows
 }
 
 func drawGoalPoses(req *armplanning.PlanRequest) error {
@@ -431,8 +501,9 @@ func handleDetail(logger logging.Logger) http.HandlerFunc {
 			return
 		}
 		data := detailData{
-			File:   file,
-			Frames: buildFrameInfo(req.FrameSystem),
+			File:        file,
+			Frames:      buildFrameInfo(req.FrameSystem),
+			StartInputs: buildStartInputs(req.StartState.Configuration()),
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := detailTmpl.Execute(w, data); err != nil {
@@ -497,7 +568,10 @@ func handlePlanRun(logger logging.Logger) http.HandlerFunc {
 				}
 				if sn.CheckPathError != nil {
 					row.CheckPathError = sn.CheckPathError.Error()
-					pgResult.InvalidSolutions = append(pgResult.InvalidSolutions, row)
+					if sn.LastGoodInputs != nil {
+						row.LastGoodInputs = linearInputsToFloats(sn.LastGoodInputs)
+					}
+					pgResult.CheckPathFailures = append(pgResult.CheckPathFailures, row)
 				} else {
 					pgResult.ValidSolutions = append(pgResult.ValidSolutions, row)
 				}
@@ -546,6 +620,131 @@ func handleRenderSolution(logger logging.Logger) http.HandlerFunc {
 	}
 }
 
+func handleRenderShadows(logger logging.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		file := r.URL.Query().Get("file")
+		if file == "" {
+			http.Error(w, "missing file parameter", http.StatusBadRequest)
+			return
+		}
+		req, err := armplanning.ReadRequestFromFile(filepath.Join(rdkRoot, file))
+		if err != nil {
+			http.Error(w, fmt.Sprintf("reading plan file: %v", err), http.StatusInternalServerError)
+			return
+		}
+		var inputFloats map[string][]float64
+		if err := json.NewDecoder(r.Body).Decode(&inputFloats); err != nil {
+			http.Error(w, fmt.Sprintf("decoding inputs: %v", err), http.StatusBadRequest)
+			return
+		}
+		end := floatsToLinearInputs(inputFloats)
+		startInputs := req.StartState.Configuration()
+		start := startInputs.ToLinearInputs()
+
+		if err := viz.RemoveAllSpatialObjects(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := viz.DrawWorldState(req.WorldState, req.FrameSystem, startInputs); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := viz.DrawFrameSystem(req.FrameSystem, startInputs); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := drawGoalPoses(req); err != nil {
+			logger.Warnf("drawing goal poses: %v", err)
+		}
+
+		midPoints, err := interpolateShadows(req.FrameSystem, start, end, shadowCount)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("interpolating: %v", err), http.StatusInternalServerError)
+			return
+		}
+		if err := drawShadows(req.FrameSystem, midPoints); err != nil {
+			http.Error(w, fmt.Sprintf("drawing shadows: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+}
+
+// interpolateShadows produces `count`+1 evenly spaced configurations from start to end (inclusive
+// on both ends). We hand-roll this instead of using InterpolateSegmentFS because that helper picks
+// step counts based on cartesian and per-joint deltas, which yields hundreds-to-thousands of steps
+// — fine for collision checking, too many for shadow rendering.
+func interpolateShadows(fs *referenceframe.FrameSystem, start, end *referenceframe.LinearInputs, count int) ([]*referenceframe.LinearInputs, error) {
+	out := make([]*referenceframe.LinearInputs, 0, count+1)
+	for step := 0; step <= count; step++ {
+		t := float64(step) / float64(count)
+		cfg := referenceframe.NewLinearInputs()
+		for frameName, startConfig := range start.Items() {
+			endConfig := end.Get(frameName)
+			frame := fs.Frame(frameName)
+			interp, err := frame.Interpolate(startConfig, endConfig, t)
+			if err != nil {
+				return nil, err
+			}
+			cfg.Put(frameName, interp)
+		}
+		out = append(out, cfg)
+	}
+	return out, nil
+}
+
+// drawShadows draws each interpolated configuration as a static "shadow" so the user can see the
+// full straight-line path at once. Only frames with DoF (or descendants of moving frames) get
+// shadows. Colors alternate per step to make ordering visible.
+func drawShadows(fs *referenceframe.FrameSystem, configs []*referenceframe.LinearInputs) error {
+	isMovingFrame := func(frameName string) bool {
+		frame := fs.Frame(frameName)
+		if frame == nil {
+			return false
+		}
+		if len(frame.DoF()) > 0 {
+			return true
+		}
+		parent, err := fs.Parent(frame)
+		for parent != nil && err == nil {
+			if len(parent.DoF()) > 0 {
+				return true
+			}
+			parent, err = fs.Parent(parent)
+		}
+		return false
+	}
+
+	shadowColors := []string{"blue", "red"}
+	for idx, cfg := range configs {
+		gifs, err := referenceframe.FrameSystemGeometries(fs, cfg.ToFrameSystemInputs())
+		if err != nil {
+			return err
+		}
+		shadowColor := shadowColors[idx%len(shadowColors)]
+		for frameName, gif := range gifs {
+			if !isMovingFrame(frameName) {
+				continue
+			}
+			shadowGeometries := make([]spatialmath.Geometry, len(gif.Geometries()))
+			for i, geom := range gif.Geometries() {
+				shadowGeom := geom.Transform(spatialmath.NewZeroPose())
+				shadowGeom.SetLabel(fmt.Sprintf("shadow_%d_%s_%d", idx, geom.Label(), i))
+				shadowGeometries[i] = shadowGeom
+			}
+			shadowGIF := referenceframe.NewGeometriesInFrame(gif.Parent(), shadowGeometries)
+			colors := make([]string, len(shadowGeometries))
+			for i := range colors {
+				colors[i] = shadowColor
+			}
+			if err := viz.DrawGeometries(shadowGIF, colors); err != nil {
+				return err
+			}
+		}
+		time.Sleep(shadowFramePeriod)
+	}
+	return nil
+}
+
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
@@ -578,6 +777,7 @@ func main() {
 	http.HandleFunc("/plan/run", handlePlanRun(logger))
 	http.HandleFunc("/render-start", handleRenderStart(logger))
 	http.HandleFunc("/render-solution", handleRenderSolution(logger))
+	http.HandleFunc("/render-shadows", handleRenderShadows(logger))
 
 	addr := "localhost:8080"
 	logger.Infof("listening on http://%s", addr)
