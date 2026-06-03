@@ -13,6 +13,7 @@ import (
 	"go.viam.com/utils/trace"
 
 	"go.viam.com/rdk/components/generic"
+	"go.viam.com/rdk/components/gripper"
 	"go.viam.com/rdk/components/motor"
 	"go.viam.com/rdk/components/sensor"
 	"go.viam.com/rdk/logging"
@@ -101,6 +102,15 @@ func mainWithArgs(ctx context.Context, args []string, logger logging.Logger) err
 		testSensorDependentModel,
 		resource.Registration[resource.Resource, *sensorDepConfig]{Constructor: newSensorDependent})
 	err = myMod.AddModelFromRegistry(ctx, sensor.API, testSensorDependentModel)
+	if err != nil {
+		return err
+	}
+
+	resource.RegisterComponent(
+		gripper.API,
+		testGripperModel,
+		resource.Registration[resource.Resource, resource.NoNativeConfig]{Constructor: newTestGripper})
+	err = myMod.AddModelFromRegistry(ctx, gripper.API, testGripperModel)
 	if err != nil {
 		return err
 	}

@@ -1,0 +1,17 @@
+{
+    "name": "modular_test_gripper",
+    "kinematic_param_type": "SVA",
+    "links": [
+        {
+            "id": "gripper_geometry",
+            "parent": "world",
+            "translation": {"x": 0, "y": 0, "z": 0},
+            "geometry": {
+                "x": 20,
+                "y": 20,
+                "z": 100,
+                "translation": {"x": 0, "y": 0, "z": 50}
+            }
+        }
+    ]
+}
