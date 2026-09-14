@@ -45,6 +45,7 @@ func NewFrameAlreadyExistsError(frameName string) error {
 
 // NewIncorrectDoFError returns an error indicating that the length of the array does not match the DoF of the frame.
 func NewIncorrectDoFError(actual, expected int) error {
+	// panic("foo")
 	return errors.Errorf("array length does not match frame DoF, expected %d but got %d", expected, actual)
 }
 

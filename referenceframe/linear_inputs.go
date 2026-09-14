@@ -292,7 +292,8 @@ func (li *LinearInputs) ComputePoses(fs *FrameSystem) (FrameSystemPoses, error) 
 	for _, frameName := range fs.FrameNames() {
 		dq, err := fk.get(frameName)
 		if err != nil {
-			return nil, err
+			continue
+			// return nil, err
 		}
 		computedPoses[frameName] = NewPoseInFrame(World, &spatial.DualQuaternion{Number: dq})
 	}

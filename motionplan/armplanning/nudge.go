@@ -2,6 +2,7 @@ package armplanning
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"math/rand"
 	"sort"
@@ -96,6 +97,7 @@ func tryNudgedStraightLine(
 		if gi >= maxNudgeGoals || ctx.Err() != nil {
 			return nil
 		}
+
 		budget := nudgeMaxSegmentChecks
 		path := nudgeRepair(ctx, psc, psc.start, g.inputs, moving, nudgeMaxDepth, &budget, rnd, logger)
 		if path != nil {
@@ -126,7 +128,7 @@ func tryNudgedStraightLine(
 func nudgeRepair(
 	ctx context.Context,
 	psc *PlanSegmentContext,
-	a, b *referenceframe.LinearInputs,
+	startInputs, endInputs *referenceframe.LinearInputs,
 	moving []string,
 	depth int,
 	budget *int,
@@ -138,8 +140,8 @@ func nudgeRepair(
 	}
 	*budget--
 	var fbFwd PathFeedback
-	if err := psc.CheckPath(ctx, a, b, true, &fbFwd); err == nil {
-		return []*referenceframe.LinearInputs{a, b}
+	if err := psc.CheckPath(ctx, startInputs, endInputs, true, &fbFwd); err == nil {
+		return []*referenceframe.LinearInputs{startInputs, endInputs}
 	}
 	if depth <= 0 || *budget <= 0 {
 		return nil
@@ -147,16 +149,16 @@ func nudgeRepair(
 
 	fa := fbFwd.LastGoodInputs
 	if fa == nil {
-		fa = a
+		fa = startInputs
 	}
 	*budget--
-	fb := b
+	fb := endInputs
 	var fbRev PathFeedback
-	if err := psc.CheckPath(ctx, b, a, true, &fbRev); err != nil && fbRev.LastGoodInputs != nil {
+	if err := psc.CheckPath(ctx, endInputs, startInputs, true, &fbRev); err != nil && fbRev.LastGoodInputs != nil {
 		fb = fbRev.LastGoodInputs
 	}
 
-	totalL2 := linearInputsL2(a, b)
+	totalL2 := linearInputsL2(startInputs, endInputs)
 	blockedL2 := linearInputsL2(fa, fb)
 	logger.Debugf("nudge depth %d: total l2 %.3f, blocked stretch l2 %.3f", depth, totalL2, blockedL2)
 	// A mostly-blocked FULL path needs planning, not a nudge — but only gate the
@@ -170,7 +172,7 @@ func nudgeRepair(
 	if err != nil {
 		return nil
 	}
-	dir := pathDirection(a, b, moving)
+	dir := pathDirection(startInputs, endInputs, moving)
 
 	// stateClearance screens a candidate with a cheap state check; returns the
 	// clearance and whether the state is valid at all.
@@ -227,6 +229,7 @@ func nudgeRepair(
 				candidates = append(candidates, candidate{[]*referenceframe.LinearInputs{v1, v2}, math.Min(c1, c2)})
 			}
 		}
+
 		// Pay for segment checks on the most promising candidates only.
 		sort.Slice(candidates, func(i, j int) bool { return candidates[i].clearance > candidates[j].clearance })
 		for i := 0; i < len(candidates) && i < nudgeSegmentTriesPerRadius; i++ {
@@ -239,16 +242,17 @@ func nudgeRepair(
 			}
 			// Reattach the already-verified outer portions of the line.
 			path := []*referenceframe.LinearInputs{}
-			if fa != a {
-				path = append(path, a)
+			if fa != startInputs {
+				path = append(path, startInputs)
 			}
 			path = append(path, repaired...)
-			if fb != b {
-				path = append(path, b)
+			if fb != endInputs {
+				path = append(path, endInputs)
 			}
 			return path
 		}
 	}
+
 	return nil
 }
 
@@ -334,6 +338,7 @@ func applyJointDelta(
 	delta jointDelta,
 ) *referenceframe.LinearInputs {
 	out := referenceframe.NewLinearInputs()
+	fmt.Printf("DBG. Base: %+v\n", base.Items())
 	for name, inputs := range base.Items() {
 		d, ok := delta[name]
 		if !ok || len(d) != len(inputs) {

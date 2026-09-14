@@ -121,6 +121,9 @@ func (pm *planManager) planToDirectJoints(
 	start *referenceframe.LinearInputs,
 	goal *PlanState,
 ) ([]*referenceframe.LinearInputs, error) {
+	// fmt.Printf("DBG. Start: %v\n", start.String())
+	// fmt.Printf("DBG. GoalPoses %v Config: %v\n", goal.Poses(), goal.Configuration())
+
 	ctx, span := trace.StartSpan(ctx, "planToDirectJoints")
 	defer span.End()
 	fullConfig := referenceframe.NewLinearInputs()
@@ -138,6 +141,23 @@ func (pm *planManager) planToDirectJoints(
 	if err != nil {
 		return nil, err
 	}
+
+	// fmt.Println("DBG. Computed GoalPoses:", goalPoses)
+
+	// A full joint configuration also includes frames already at their target.
+	// Only changed joints should seed the primary motion chains; the planner can
+	// still move other frames if needed for collision avoidance.
+
+	// movingGoals := referenceframe.FrameSystemPoses{}
+	// for name, pose := range goalPoses {
+	//  	if !slices.Equal(fullConfig.Get(name), start.Get(name)) {
+	//  		movingGoals[name] = pose
+	//  	}
+	// }
+	// if len(movingGoals) > 0 {
+	//  	goalPoses = movingGoals
+	// }
+	// fmt.Println("DBG. Moving GoalPoses:", movingGoals)
 
 	psc, err := NewPlanSegmentContext(ctx, pm.pc, start, goalPoses)
 	if err != nil {
@@ -172,6 +192,8 @@ func (pm *planManager) planToDirectJoints(
 	if err != nil {
 		return nil, err
 	}
+
+	// fmt.Println("DBG. Final size:", len(finalSteps.steps))
 	finalSteps.steps, _, err = smoothPath(ctx, psc, finalSteps.steps)
 	if err != nil {
 		return nil, err
